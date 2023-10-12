@@ -1,6 +1,4 @@
- Points = Instance.new('Folder')
-Points.Parent = workspace
-Points.Name = 'Points'
+Points = workspace.Points
 
 Part = Instance.new('Part')
 Part.Parent = Points
