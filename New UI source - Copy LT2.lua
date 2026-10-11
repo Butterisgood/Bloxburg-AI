@@ -328,7 +328,7 @@ local CurrentCamera: Camera? = workspace.CurrentCamera;
 
 local Compkiller = {
 	Version = '1.0',
-	Logo = "rbxassetid://120245531583106",
+	Logo = "rbxassetid://102337949802265",
 	Windows = {},
 	Scale = {
 		Window = UDim2.new(0, 456,0, 499),
@@ -10672,6 +10672,11 @@ function Compkiller.new(Config : Window)
 		ImageLabel.SizeConstraint = Enum.SizeConstraint.RelativeYY
 		ImageLabel.ZIndex = 151
 		ImageLabel.Image = Config.Logo
+		ImageLabel.ImageColor3 = Compkiller.Colors.Highlight
+		table.insert(Compkiller.Elements.Highlight, {
+			Element = ImageLabel,
+			Property = "ImageColor3"
+		});
 		ImageLabel.ImageTransparency = 1
 		ImageLabel.ClipsDescendants = false;
 
@@ -10791,6 +10796,11 @@ function Compkiller.new(Config : Window)
 			CompLogo.SizeConstraint = Enum.SizeConstraint.RelativeYY
 			CompLogo.ZIndex = 159
 			CompLogo.Image = Config.Logo
+			CompLogo.ImageColor3 = Compkiller.Colors.Highlight
+			table.insert(Compkiller.Elements.Highlight, {
+				Element = CompLogo,
+				Property = "ImageColor3"
+			});
 
 			WaternarkList.Name = Compkiller:_RandomString()
 			WaternarkList.Parent = Watermark
@@ -10848,6 +10858,8 @@ function Compkiller.new(Config : Window)
 				Icon.SizeConstraint = Enum.SizeConstraint.RelativeYY
 				Icon.ZIndex = 156
 				Icon.Image = Compkiller:_GetIcon(Watermark.Icon);
+				Icon.Visible = Watermark.ShowIcon ~= false;
+				Icon.ImageColor3 = Watermark.IconColor or Color3.new(1, 1, 1);
 
 				TextLabel.Parent = WaternarkList
 				TextLabel.BackgroundTransparency = 1.000
@@ -10855,16 +10867,18 @@ function Compkiller.new(Config : Window)
 				TextLabel.BorderSizePixel = 0
 				TextLabel.Size = UDim2.new(0, 50, 0.699999988, 0)
 				TextLabel.ZIndex = 156
-				TextLabel.Font = Enum.Font.GothamMedium
+				TextLabel.Font = Watermark.Font or Enum.Font.GothamMedium
 				TextLabel.Text = Watermark.Text
-				TextLabel.TextColor3 = Compkiller.Colors.SwitchColor
-				TextLabel.TextSize = 10.000
+				TextLabel.TextColor3 = Watermark.TextColor or Compkiller.Colors.SwitchColor
+				TextLabel.TextSize = Watermark.TextSize or 10
 				TextLabel.TextXAlignment = Enum.TextXAlignment.Left
 
-				table.insert(Compkiller.Elements.SwitchColor , {
-					Element = TextLabel,
-					Property = 'TextColor3'
-				});
+				if not Watermark.TextColor then
+					table.insert(Compkiller.Elements.SwitchColor , {
+						Element = TextLabel,
+						Property = 'TextColor3'
+					});
+				end;
 
 				local Update = function()
 					local scale = TextService:GetTextSize(TextLabel.Text,TextLabel.TextSize,TextLabel.Font,Vector2.new(math.huge,math.huge));
@@ -10882,7 +10896,7 @@ function Compkiller.new(Config : Window)
 				end;
 
 				function Arg:Visible(v)
-					Icon.Visible = v;
+					Icon.Visible = v and Watermark.ShowIcon ~= false;
 					TextLabel.Visible = v;
 				end;
 
@@ -11464,7 +11478,7 @@ function Compkiller:Loader(IconId,Duration)
 	Icon.Position = UDim2.new(0.5, 0, 0.5, 0)
 	Icon.Size = UDim2.new(0, 750, 0, 750)
 	Icon.ZIndex = 100
-	Icon.Image = IconId or "rbxassetid://120245531583106"
+	Icon.Image = IconId or "rbxassetid://102337949802265"
 	Icon.ImageTransparency = 1
 
 	Vignette.Name = Compkiller:_RandomString()
@@ -11622,7 +11636,12 @@ function Compkiller.newNotify()
 			CompLogo.Position = UDim2.new(0, 6, 0, 6)
 			CompLogo.Size = UDim2.new(0, 25, 0, 25)
 			CompLogo.ZIndex = 4
-			CompLogo.Image = Compkiller:_GetIcon(Notify.Icon);
+			CompLogo.Image = "rbxassetid://102337949802265";
+			CompLogo.ImageColor3 = Compkiller.Colors.Highlight;
+			table.insert(Compkiller.Elements.Highlight, {
+				Element = CompLogo,
+				Property = "ImageColor3"
+			});
 
 			Header.Name = Compkiller:_RandomString()
 			Header.Parent = NotifyFrame
@@ -11789,7 +11808,7 @@ function Compkiller:CreateWindow(name, isMulti)
 		Compkiller._MainWindow = Compkiller.new({
 			Name = name or "BUTTER",
 			Keybind = "LeftAlt",
-			Logo = "rbxassetid://120245531583106",
+			Logo = "rbxassetid://102337949802265",
 			Scale = Compkiller.Scale.Window,
 			TextSize = 15
 		})
