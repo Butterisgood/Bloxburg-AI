@@ -69,7 +69,15 @@ export type NotifyPayback = {
 
 export type Watermark = {
 	Icon: string,
-	Text: string
+	Text: string,
+	ShowIcon: boolean?,
+	TextColor: Color3?,
+	IconColor: Color3?,
+	Font: Enum.Font?,
+	TextSize: number?,
+	StableWidth: boolean?,
+	MinWidth: number?,
+	WidthSample: string?,
 };
 
 export type TabConfig = {
@@ -158,6 +166,8 @@ export type Dropdown = {
 
 export type Button = {
 	Name: string,
+	Cooldown: number?,
+	AllowConcurrent: boolean?,
 	Callback: () -> any?
 };
 
@@ -356,6 +366,7 @@ Compkiller.Colors = {
 };
 
 Compkiller.Elements = {
+	Polish = {},
 	Highlight = {},
 	DropHighlight = {},
 	Risky = {},
@@ -373,6 +384,72 @@ Compkiller.DragBlacklist = {};
 Compkiller.IaDrag = false;
 Compkiller.LastDrag = tick();
 Compkiller.Flags = {};
+
+-- Derive small presentation adjustments from the current palette. Presets and
+-- saved theme values stay unchanged, including user-supplied accent colors.
+local PolishBlends = {
+	RestoreIcon = {"Highlight", "SwitchColor", 0.12},
+	Popup = {"BGDBColor", "DropColor", 0.35},
+	Hover = {"DropColor", "MouseEnter", 0.28},
+	MutedText = {"SwitchColor", "BGDBColor", 0.18},
+	Placeholder = {"SwitchColor", "BGDBColor", 0.42},
+};
+
+function Compkiller:_PolishColor(Role, BaseColor)
+	local Blend = PolishBlends[Role];
+	if Blend then
+		return (BaseColor or self.Colors[Blend[1]]):Lerp(self.Colors[Blend[2]], Blend[3]);
+	end;
+	return assert(self.Colors[Role], "Unknown UI color role: " .. tostring(Role));
+end;
+
+function Compkiller:_PolishBinding(Element)
+	local Bindings = self.Elements.Polish;
+	if not Bindings[Element] then
+		Bindings[Element] = {Properties = {}};
+		Element.Destroying:Connect(function()
+			Bindings[Element] = nil;
+		end);
+	end;
+	return Bindings[Element];
+end;
+
+function Compkiller:_BindPolishColor(Element, Property, Role)
+	self:_PolishBinding(Element).Properties[Property] = Role;
+	Element[Property] = self:_PolishColor(Role);
+end;
+
+function Compkiller:_BindPolishUpdate(Element, Update)
+	self:_PolishBinding(Element).Update = Update;
+end;
+
+function Compkiller:_RefreshPolishColors()
+	for Element, Binding in pairs(self.Elements.Polish) do
+		for Property, Role in pairs(Binding.Properties) do
+			Element[Property] = self:_PolishColor(Role);
+		end;
+		if Binding.Update then Binding.Update(); end;
+	end;
+end;
+
+local BrandIcons = setmetatable({}, {__mode = "k"});
+
+function Compkiller:_CreateBrandIcon(Parent, Asset)
+	local Image = Instance.new("ImageLabel");
+	Image.BackgroundTransparency = 1;
+	Image.Image = Asset or self.Logo;
+	Image.Parent = Parent;
+	BrandIcons[Image] = true;
+	self:_BindPolishColor(Image, "ImageColor3", "Highlight");
+	return Image;
+end;
+
+function Compkiller:_RestoreBrandBindings()
+	-- Progress/notification icons may precede new(), which clears theme buckets.
+	for Image in pairs(BrandIcons) do
+		if Image.Parent then self:_BindPolishColor(Image, "ImageColor3", "Highlight"); end;
+	end;
+end;
 
 Compkiller.Lucide = {
 	['lucide-mouse-2'] = "rbxassetid://10088146939",
@@ -1509,6 +1586,103 @@ function Compkiller:_TrackWindowState(id, state)
 end;
 -- ────────────────────────────────────────────────────────────────────────────
 
+local RippleButtons = setmetatable({}, {__mode = "k"});
+
+function Compkiller:_ClickRipple(Button)
+	if not Button.Parent or not Button.Visible or self:_IsDropdownHoverBlocked(Button) then return; end;
+	local Size = Button.AbsoluteSize;
+	if Size.X <= 0 or Size.Y <= 0 then return; end;
+	local Previous = Button:FindFirstChild("ButterClickFeedback");
+	if Previous then Previous:Destroy(); end;
+
+	local Holder = Instance.new("Frame");
+	Holder.Name = "ButterClickFeedback";
+	Holder.BackgroundTransparency = 1;
+	Holder.BorderSizePixel = 0;
+	Holder.Size = UDim2.fromScale(1, 1);
+	Holder.ClipsDescendants = true;
+	Holder.ZIndex = Button.ZIndex + 1;
+	Holder.Parent = Button;
+	local SourceCorner = Button:FindFirstChildOfClass("UICorner") or Button.Parent:FindFirstChildOfClass("UICorner");
+	local Corner = Instance.new("UICorner", Holder);
+	Corner.CornerRadius = SourceCorner and SourceCorner.CornerRadius or UDim.new(0, 4);
+
+	local Circle = Instance.new("Frame");
+	Circle.AnchorPoint = Vector2.new(0.5, 0.5);
+	Circle.Position = UDim2.fromScale(0.5, 0.5);
+	Circle.Size = UDim2.fromOffset(0, 0);
+	Circle.BackgroundColor3 = self.Colors.Highlight:Lerp(self.Colors.SwitchColor, 0.2);
+	Circle.BackgroundTransparency = 0.65;
+	Circle.BorderSizePixel = 0;
+	Circle.ZIndex = Holder.ZIndex + 1;
+	Circle.Parent = Holder;
+	Instance.new("UICorner", Circle).CornerRadius = UDim.new(1, 0);
+
+	local Diameter = math.ceil(math.sqrt(Size.X * Size.X + Size.Y * Size.Y)) + 4;
+	local Tween = self:_Animation(Circle, TweenInfo.new(0.3), {
+		Size = UDim2.fromOffset(Diameter, Diameter),
+		BackgroundTransparency = 1,
+	});
+	Tween.Completed:Once(function() Holder:Destroy(); end);
+end;
+
+function Compkiller:_BindClickRipple(Button)
+	if RippleButtons[Button] then return; end;
+	RippleButtons[Button] = true;
+	-- Use the same accepted-click event as the action, never raw InputBegan.
+	-- A mouse press used only to focus the window must not imitate an action.
+	Button.MouseButton1Click:Connect(function() self:_ClickRipple(Button); end);
+end;
+
+-- Each action button owns its running callback and explicitly spawned workers.
+-- No global task hooks, queued clicks, or polling loops are needed.
+function Compkiller:_WithButtonContext(Context, Callback, ...)
+	self._ButtonContexts = self._ButtonContexts or setmetatable({}, {__mode = "k"});
+	local Thread = coroutine.running();
+	local Previous = self._ButtonContexts[Thread];
+	local WasOwned = Context.Threads[Thread];
+	self._ButtonContexts[Thread] = Context;
+	Context.Threads[Thread] = true;
+	local Result = table.pack(xpcall(Callback, debug.traceback, ...));
+	Context.Threads[Thread] = WasOwned;
+	self._ButtonContexts[Thread] = Previous;
+	if not Result[1] then error(Result[2], 0); end;
+	return table.unpack(Result, 2, Result.n);
+end;
+
+function Compkiller:_SpawnButtonTask(Callback, ...)
+	local Context = self._ButtonContexts and self._ButtonContexts[coroutine.running()];
+	if not Context then return task.spawn(Callback, ...); end;
+	return task.spawn(function(...)
+		return self:_WithButtonContext(Context, Callback, ...);
+	end, ...);
+end;
+
+function Compkiller:_GuardButtonCallback(Callback, Options)
+	Options = Options or {};
+	local Cooldown = math.max(0, tonumber(Options.Cooldown) or 0.35);
+	local LastClick = -math.huge;
+	local Active;
+	local function IsBusy()
+		if not Active then return false; end;
+		-- A cancelled task cannot run its finally-style cleanup. Prune it on demand.
+		for Thread in pairs(Active.Threads) do
+			if coroutine.status(Thread) == "dead" then Active.Threads[Thread] = nil; end;
+		end;
+		return next(Active.Threads) ~= nil;
+	end;
+	local function Run(...)
+		if Options.AllowConcurrent ~= true and IsBusy() then return; end;
+		local Now = os.clock();
+		if Now - LastClick < Cooldown then return; end;
+		LastClick = Now;
+		-- Explicit start/abort buttons already own their operation lifetime.
+		if Options.AllowConcurrent == true then return Callback(...); end;
+		Active = {Threads = {}};
+		return self:_WithButtonContext(Active, Callback, ...);
+	end;
+	return Run, IsBusy;
+end;
 function Compkiller:_Rounding(num: number, numDecimalPlaces: number) : number
 	local mult: number = 10 ^ (numDecimalPlaces or 0);
 	return math.floor(num * mult + 0.5) / mult;
@@ -1529,6 +1703,7 @@ function Compkiller:_Input(Frame : Frame , Callback : () -> ()) : TextButton
 	Button.Size = UDim2.fromScale(1,1);
 	Button.BackgroundTransparency = 1;
 	Button.TextTransparency = 1;
+	self:_BindClickRipple(Button);
 
 	if Callback then
 		Button.MouseButton1Click:Connect(Callback);
@@ -1653,6 +1828,73 @@ function Compkiller:_Blur(element : Frame , WindowRemote) : RBXScriptSignal
 	return rbxsignal;
 end;
 
+-- Opening any dropdown locks hover/press highlights outside dropdown contents.
+-- Keep the set so closing one menu cannot unlock another still-open menu.
+local DropdownHoverBlockers = {};
+local DropdownHoverTargets = {};
+Compkiller.DropdownOpen = false;
+
+local function RefreshDropdownHover()
+	Compkiller.DropdownOpen = next(DropdownHoverBlockers) ~= nil;
+	for _, Update in pairs(DropdownHoverTargets) do
+		Update();
+	end;
+end;
+
+function Compkiller:_IsDropdownHoverBlocked(Frame)
+	if not Compkiller.DropdownOpen then
+		return false;
+	end;
+	for Popup in pairs(DropdownHoverBlockers) do
+		if Frame == Popup or Frame:IsDescendantOf(Popup) then
+			return false;
+		end;
+	end;
+	return true;
+end;
+
+function Compkiller:_RegisterDropdownHoverBlocker(Popup)
+	local IsOpen = false;
+	local function Update()
+		if not IsOpen and not DropdownHoverBlockers[Popup] then return; end;
+		DropdownHoverBlockers[Popup] = (IsOpen and Popup.Parent and Popup.Visible) and true or nil;
+		RefreshDropdownHover();
+	end;
+	Popup:GetPropertyChangedSignal("Visible"):Connect(Update);
+	Popup.Destroying:Connect(function()
+		IsOpen = false;
+		DropdownHoverBlockers[Popup] = nil;
+		RefreshDropdownHover();
+	end);
+	return function(Open)
+		IsOpen = Open;
+		Update();
+	end;
+end;
+
+function Compkiller:_BindDropdownHover(Frame, OnHover, Release)
+	local Inside, Highlighted = false, false;
+	local function Update()
+		local Hover = Inside and not Compkiller:_IsDropdownHoverBlocked(Frame);
+		if Hover == Highlighted then return; end;
+		Highlighted = Hover;
+		if Hover then OnHover(); else Release(); end;
+	end;
+	Frame.MouseEnter:Connect(function()
+		Inside = true;
+		DropdownHoverTargets[Frame] = Update;
+		Update();
+	end);
+	Frame.MouseLeave:Connect(function()
+		Inside = false;
+		DropdownHoverTargets[Frame] = nil;
+		Update();
+	end);
+	Frame.Destroying:Connect(function()
+		DropdownHoverTargets[Frame] = nil;
+	end);
+end;
+
 function Compkiller:_AddDragBlacklist(Frame: Frame)
 	local IsAdded = false;
 	local BASE_TIME = 0.01;
@@ -1739,7 +1981,11 @@ function Compkiller.__SIGNAL(default)
 	return Binds;
 end;
 
-function Compkiller:_Hover(Frame: Frame , OnHover: () -> any?, Release: () -> any?)
+function Compkiller:_Hover(Frame: Frame , OnHover: () -> any?, Release: () -> any?, RespectDropdowns: boolean?)
+	if RespectDropdowns ~= false then
+		return Compkiller:_BindDropdownHover(Frame, OnHover, Release);
+	end;
+
 	Frame.MouseEnter:Connect(OnHover);
 
 	Frame.MouseLeave:Connect(Release);
@@ -1832,14 +2078,14 @@ local function InitializeTranslationSystem()
 	local bg = Instance.new("Frame", sg)
 	bg.Size = UDim2.new(0, 320, 0, 160)
 	bg.Position = UDim2.new(0.5, -160, 0.5, -80)
-	bg.BackgroundColor3 = Color3.fromRGB(22, 24, 29)
+	Compkiller:_BindPolishColor(bg, "BackgroundColor3", "Popup");
 	bg.BorderSizePixel = 0
 	
 	local corner = Instance.new("UICorner", bg)
 	corner.CornerRadius = UDim.new(0, 8)
 	
 	local uiStroke = Instance.new("UIStroke", bg)
-	uiStroke.Color = Color3.fromRGB(55, 56, 63)
+	Compkiller:_BindPolishColor(uiStroke, "Color", "HighStrokeColor");
 	uiStroke.Thickness = 1
 	
 	local label = Instance.new("TextLabel", bg)
@@ -1847,7 +2093,7 @@ local function InitializeTranslationSystem()
 	label.Position = UDim2.new(0, 10, 0, 10)
 	label.BackgroundTransparency = 1
 	label.Text = promptText
-	label.TextColor3 = Color3.fromRGB(255, 255, 255)
+	Compkiller:_BindPolishColor(label, "TextColor3", "SwitchColor");
 	label.TextWrapped = true
 	label.Font = Enum.Font.GothamMedium
 	label.TextSize = 18
@@ -1855,9 +2101,9 @@ local function InitializeTranslationSystem()
 	local btnYes = Instance.new("TextButton", bg)
 	btnYes.Size = UDim2.new(0.4, 0, 0, 40)
 	btnYes.Position = UDim2.new(0.05, 0, 1, -50)
-	btnYes.BackgroundColor3 = Color3.fromRGB(14, 203, 213)
+	Compkiller:_BindPolishColor(btnYes, "BackgroundColor3", "Toggle");
 	btnYes.Text = yesText
-	btnYes.TextColor3 = Color3.fromRGB(255, 255, 255)
+	Compkiller:_BindPolishColor(btnYes, "TextColor3", "SwitchColor");
 	btnYes.Font = Enum.Font.GothamBold
 	btnYes.TextSize = 16
 	Instance.new("UICorner", btnYes).CornerRadius = UDim.new(0, 6)
@@ -1865,15 +2111,17 @@ local function InitializeTranslationSystem()
 	local btnNo = Instance.new("TextButton", bg)
 	btnNo.Size = UDim2.new(0.4, 0, 0, 40)
 	btnNo.Position = UDim2.new(0.55, 0, 1, -50)
-	btnNo.BackgroundColor3 = Color3.fromRGB(39, 40, 47)
+	Compkiller:_BindPolishColor(btnNo, "BackgroundColor3", "BlockBackground");
 	btnNo.Text = noText
-	btnNo.TextColor3 = Color3.fromRGB(255, 255, 255)
+	Compkiller:_BindPolishColor(btnNo, "TextColor3", "SwitchColor");
 	btnNo.Font = Enum.Font.GothamBold
 	btnNo.TextSize = 16
 	Instance.new("UICorner", btnNo).CornerRadius = UDim.new(0, 6)
 
 	local bindable = Instance.new("BindableEvent")
+	Compkiller:_BindClickRipple(btnYes);
 	btnYes.MouseButton1Click:Connect(function() bindable:Fire(true) end)
+	Compkiller:_BindClickRipple(btnNo);
 	btnNo.MouseButton1Click:Connect(function() bindable:Fire(false) end)
 	
 	local result = bindable.Event:Wait()
@@ -2739,10 +2987,7 @@ function Compkiller:_AddColorPickerPanel(Button: ImageButton , Callback: (Color:
 	ColorPickerWindow.AnchorPoint = Vector2.new(0.5,0)
 	ColorPickerWindow.Active = true;
 
-	table.insert(Compkiller.Elements.BlockBackground,{
-		Element = ColorPickerWindow,
-		Property = "BackgroundColor3"
-	});
+	Compkiller:_BindPolishColor(ColorPickerWindow, "BackgroundColor3", "Popup");
 
 	Compkiller:_AddDragBlacklist(ColorPickerWindow)
 
@@ -2780,7 +3025,7 @@ function Compkiller:_AddColorPickerPanel(Button: ImageButton , Callback: (Color:
 	UICorner_2.CornerRadius = UDim.new(0, 2)
 	UICorner_2.Parent = ColorPickBox
 
-	UIStroke_2.Color = Color3.fromRGB(29, 29, 29)
+	Compkiller:_BindPolishColor(UIStroke_2, "Color", "StrokeColor");
 	UIStroke_2.Parent = ColorPickBox
 
 	ColorRedGreenBlue.Name = Compkiller:_RandomString()
@@ -2883,7 +3128,7 @@ function Compkiller:_AddColorPickerPanel(Button: ImageButton , Callback: (Color:
 	UIGradient_2.Parent = ColorOpc
 
 	UIStroke_7.Transparency = 0.500
-	UIStroke_7.Color = Color3.fromRGB(29, 29, 29)
+	Compkiller:_BindPolishColor(UIStroke_7, "Color", "StrokeColor");
 	UIStroke_7.Parent = ColorOpc
 
 	TransparentImage.Name = "TransparentImage"
@@ -3721,10 +3966,7 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 	DropdownWindow.Size = UDim2.new(0, 190, 0, 200)
 	DropdownWindow.ZIndex = BaseZ_Index
 
-	table.insert(Compkiller.Elements.BGDBColor,{
-		Element = DropdownWindow,
-		Property = "BackgroundColor3"
-	});
+	Compkiller:_BindPolishColor(DropdownWindow, "BackgroundColor3", "Popup");
 
 	Compkiller:_AddDragBlacklist(DropdownWindow);
 	Compkiller:_AddPropertyEvent(DropdownWindow,function(v)
@@ -3748,7 +3990,7 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 	SearchBox.Position = UDim2.new(0, 5, 0, 5)
 	SearchBox.BackgroundTransparency = 1
 	SearchBox.TextColor3 = Compkiller.Colors.SwitchColor
-	SearchBox.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+	Compkiller:_BindPolishColor(SearchBox, "PlaceholderColor3", "Placeholder");
 	SearchBox.PlaceholderText = "Search..."
 	SearchBox.Font = Enum.Font.Gotham
 	SearchBox.TextSize = 12
@@ -3783,13 +4025,16 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 	ClearStroke.Color = Compkiller.Colors.StrokeColor
 	ClearStroke.Thickness = 1
 	ClearStroke.Parent = ClearButton
+	Compkiller:_BindPolishColor(ClearButton, "BackgroundColor3", "DropColor");
+	Compkiller:_BindPolishColor(ClearButton, "TextColor3", "SwitchColor");
+	Compkiller:_BindPolishColor(ClearStroke, "Color", "StrokeColor");
 
 	Compkiller:_Hover(ClearButton, function()
 		Compkiller:_Animation(ClearButton, TweenInfo.new(0.15), {
-			BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+			BackgroundColor3 = Compkiller:_PolishColor("Hover")
 		})
 		Compkiller:_Animation(ClearButton, TweenInfo.new(0.15), {
-			TextColor3 = Color3.fromRGB(255, 255, 255)
+			TextColor3 = Compkiller.Colors.SwitchColor
 		})
 	end, function()
 		Compkiller:_Animation(ClearButton, TweenInfo.new(0.15), {
@@ -3816,7 +4061,7 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 	UIListLayout.Parent = ScrollingFrame
 	UIListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 	UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-	UIListLayout.Padding = UDim.new(0, 10)
+	UIListLayout.Padding = UDim.new(0, 6)
 
 	UIListLayout:GetPropertyChangedSignal('AbsoluteContentSize'):Connect(function()
 		ScrollingFrame.CanvasSize = UDim2.fromOffset(UIListLayout.AbsoluteContentSize.X,UIListLayout.AbsoluteContentSize.Y)
@@ -3839,12 +4084,15 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 		end
 	end)
 
+	local SetDropdownHoverOpen = Compkiller:_RegisterDropdownHoverBlocker(DropdownWindow);
+
 	local ToggleUI = function(bool)
 		local IsSame = ToggleDb:GetValue() == bool;
 		if IsSame then return end;
 
 		EventOut:Fire(bool);
 		ToggleDb:Fire(bool);
+		SetDropdownHoverOpen(bool);
 
 		local MUL = Window.AbsoluteSize.Y / 2;
 
@@ -3916,7 +4164,7 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 		DropdownItem.BackgroundTransparency = 1.000
 		DropdownItem.BorderColor3 = Color3.fromRGB(0, 0, 0)
 		DropdownItem.BorderSizePixel = 0
-		DropdownItem.Size = UDim2.new(1, -1, 0, 20)
+		DropdownItem.Size = UDim2.new(1, -8, 0, 24)
 		DropdownItem.ZIndex = BaseZ_Index + 6
 		
 		UIStroke.Parent = DropdownItem
@@ -3938,7 +4186,7 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 		BlockText.Text = ""
 		BlockText.TextColor3 = Compkiller.Colors.SwitchColor
 		BlockText.TextSize = 13.000
-		BlockText.TextTransparency = 0.500
+		BlockText.TextTransparency = 0.250
 		BlockText.TextXAlignment = Enum.TextXAlignment.Left
 
 		table.insert(Compkiller.Elements.SwitchColor , {
@@ -3950,7 +4198,7 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 		BlockLine.Parent = DropdownItem
 		BlockLine.AnchorPoint = Vector2.new(0.5, 1)
 		BlockLine.BackgroundColor3 = Compkiller.Colors.LineColor
-		BlockLine.BackgroundTransparency = 0.500
+		BlockLine.BackgroundTransparency = 0.800
 		BlockLine.BorderColor3 = Color3.fromRGB(0, 0, 0)
 		BlockLine.BorderSizePixel = 0
 		BlockLine.Position = UDim2.new(0.5, 0, 1, 0)
@@ -4019,11 +4267,11 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 			table.insert(__signals , ToggleDb:Connect(function(bool)
 				if bool then
 					Compkiller:_Animation(bth.BlockText,TweenInfo.new(0.2),{
-						TextTransparency = ((IsDefault(v) or MatchDefault(v,currentDataFrame or DataFrame)) and 0) or 0.5
+						TextTransparency = ((IsDefault(v) or MatchDefault(v,currentDataFrame or DataFrame)) and 0) or 0.25
 					});
 
 					Compkiller:_Animation(bth.BlockLine,TweenInfo.new(0.2),{
-						BackgroundTransparency = 0
+						BackgroundTransparency = 0.8
 					});
 				else
 					Compkiller:_Animation(bth.BlockText,TweenInfo.new(0.2),{
@@ -4038,7 +4286,7 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 
 			if ToggleDb:GetValue() then
 				Compkiller:_Animation(bth.BlockText,TweenInfo.new(0.2),{
-					TextTransparency = ((IsDefault(v) or MatchDefault(v,currentDataFrame or DataFrame)) and 0) or 0.5
+					TextTransparency = ((IsDefault(v) or MatchDefault(v,currentDataFrame or DataFrame)) and 0) or 0.25
 				});
 			end;
 
@@ -4055,14 +4303,14 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 				end;
 
 				Compkiller:_Animation(bth.BlockText,TweenInfo.new(0.2),{
-					TextTransparency = ((MatchDefault(v,currentDataFrame)) and 0) or 0.5
+					TextTransparency = ((MatchDefault(v,currentDataFrame)) and 0) or 0.25
 				});
 
 				btn = Compkiller:_Input(bth.DropdownItem,function()
 					currentDataFrame[v] = not currentDataFrame[v];
 
 					Compkiller:_Animation(bth.BlockText,TweenInfo.new(0.2),{
-						TextTransparency = ((MatchDefault(v,currentDataFrame)) and 0) or 0.5
+						TextTransparency = ((MatchDefault(v,currentDataFrame)) and 0) or 0.25
 					});
 
 					Callback(currentDataFrame)
@@ -4071,7 +4319,7 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 				btn = Compkiller:_Input(bth.DropdownItem,function()
 					if DataFrame then
 						Compkiller:_Animation(DataFrame.BlockText,TweenInfo.new(0.2),{
-							TextTransparency = ((IsDefault(v) or MatchDefault(v,DataFrame)) and 0) or 0.5
+							TextTransparency = ((IsDefault(v) or MatchDefault(v,DataFrame)) and 0) or 0.25
 						});
 					end;
 
@@ -4080,7 +4328,7 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 					DataFrame = bth;
 
 					Compkiller:_Animation(bth.BlockText,TweenInfo.new(0.2),{
-						TextTransparency = ((IsDefault(v) or MatchDefault(v,DataFrame)) and 0) or 0.5
+						TextTransparency = ((IsDefault(v) or MatchDefault(v,DataFrame)) and 0) or 0.25
 					});
 
 					Callback(DataFrame.Value)
@@ -4088,15 +4336,17 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 				end);
 			end;
 			
+			local RowHighlighted = false;
 			local function applyHighlight(isHighlighted)
+				RowHighlighted = isHighlighted;
 				if isHighlighted then
 					Compkiller:_Animation(bth.DropdownItem,TweenInfo.new(0.2),{
-						BackgroundColor3 = Compkiller.Colors.MouseEnter,
+						BackgroundColor3 = Compkiller:_PolishColor("Hover"),
 						BackgroundTransparency = 0
 					})
 					Compkiller:_Animation(bth.UIStroke,TweenInfo.new(0.2),{
 						Color = Compkiller.Colors.Highlight,
-						Transparency = 0
+						Transparency = 0.25
 					})
 				else
 					Compkiller:_Animation(bth.DropdownItem,TweenInfo.new(0.2),{
@@ -4108,6 +4358,8 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 				end
 			end
 			
+			Compkiller:_BindPolishUpdate(bth.DropdownItem, function() applyHighlight(RowHighlighted); end);
+
 			btn.InputBegan:Connect(function(input)
 				if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 					applyHighlight(true)
@@ -4118,15 +4370,15 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 					applyHighlight(false)
 				end
 			end)
-			bth.DropdownItem.MouseEnter:Connect(function()
+			Compkiller:_Hover(bth.DropdownItem, function()
 				applyHighlight(true)
-			end)
-			bth.DropdownItem.MouseLeave:Connect(function()
+			end, function()
 				applyHighlight(false)
-			end)
+			end, true)
 		end;
 	end;
 
+	Compkiller:_BindClickRipple(ClearButton);
 	ClearButton.MouseButton1Click:Connect(function()
 		if not IsMulti or not currentDataFrame then return end
 
@@ -4138,7 +4390,7 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 		for _, bth in ipairs(currentButtons) do
 			if bth and bth.BlockText then
 				Compkiller:_Animation(bth.BlockText, TweenInfo.new(0.2), {
-					TextTransparency = 0.5
+					TextTransparency = 0.25
 				})
 			end
 		end
@@ -4175,7 +4427,7 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 			Default = {}
 			for _, bth in ipairs(currentButtons) do
 				if bth and bth.BlockText then
-					bth.BlockText.TextTransparency = 0.5
+					bth.BlockText.TextTransparency = 0.25
 				end
 			end
 			Callback(currentDataFrame)
@@ -4235,7 +4487,7 @@ function Compkiller:_LoadImageDropdown(BaseParent: TextButton, Callback: () -> a
 	DropdownWindow.Size                 = UDim2.new(0,190,0,200);
 	DropdownWindow.ZIndex               = BaseZ_Index;
 
-	table.insert(Compkiller.Elements.BGDBColor,{Element=DropdownWindow,Property="BackgroundColor3"});
+	Compkiller:_BindPolishColor(DropdownWindow, "BackgroundColor3", "Popup");
 	Compkiller:_AddDragBlacklist(DropdownWindow);
 	Compkiller:_AddPropertyEvent(DropdownWindow, function(v) DropdownWindow.Visible = v; end);
 
@@ -4270,11 +4522,14 @@ function Compkiller:_LoadImageDropdown(BaseParent: TextButton, Callback: () -> a
 		);
 	end);
 
+	local SetDropdownHoverOpen = Compkiller:_RegisterDropdownHoverBlocker(DropdownWindow);
+
 	local function ToggleUI(bool)
 		local IsSame = ToggleDb:GetValue() == bool;
 		if IsSame then return end;
 		EventOut:Fire(bool);
 		ToggleDb:Fire(bool);
+		SetDropdownHoverOpen(bool);
 
 		local MUL          = Window.AbsoluteSize.Y / 2;
 		local MainPosition = UDim2.fromOffset(BaseParent.AbsolutePosition.X + 1, BaseParent.AbsolutePosition.Y + 80);
@@ -4329,7 +4584,7 @@ function Compkiller:_LoadImageDropdown(BaseParent: TextButton, Callback: () -> a
 		Row.Name                 = Compkiller:_RandomString();
 		Row.BackgroundTransparency = 1;
 		Row.BorderSizePixel      = 0;
-		Row.Size                 = UDim2.new(1,-2,0,ROW_H);
+		Row.Size                 = UDim2.new(1,-8,0,ROW_H);
 		Row.ZIndex               = BaseZ_Index + 6;
 		
 		UIStroke.Parent = Row
@@ -4348,7 +4603,7 @@ function Compkiller:_LoadImageDropdown(BaseParent: TextButton, Callback: () -> a
 		Thumb.ZIndex               = BaseZ_Index + 7;
 		Thumb.ScaleType            = Enum.ScaleType.Fit;
 		Thumb.Image                = item.image or "";
-		Thumb.ImageTransparency    = 0.5;
+		Thumb.ImageTransparency    = 0.25;
 
 		Label.Name                 = Compkiller:_RandomString();
 		Label.Parent               = Row;
@@ -4362,7 +4617,7 @@ function Compkiller:_LoadImageDropdown(BaseParent: TextButton, Callback: () -> a
 		Label.Text                 = tostring(item.name or "");
 		Label.TextColor3           = Compkiller.Colors.SwitchColor;
 		Label.TextSize             = 12;
-		Label.TextTransparency     = 0.5;
+		Label.TextTransparency     = 0.25;
 		Label.TextXAlignment       = Enum.TextXAlignment.Left;
 		Label.TextTruncate         = Enum.TextTruncate.AtEnd;
 		table.insert(Compkiller.Elements.SwitchColor,{Element=Label,Property='TextColor3'});
@@ -4371,7 +4626,7 @@ function Compkiller:_LoadImageDropdown(BaseParent: TextButton, Callback: () -> a
 		Divider.Parent               = Row;
 		Divider.AnchorPoint          = Vector2.new(0.5,1);
 		Divider.BackgroundColor3     = Compkiller.Colors.LineColor;
-		Divider.BackgroundTransparency = 0.5;
+		Divider.BackgroundTransparency = 0.8;
 		Divider.BorderSizePixel      = 0;
 		Divider.Position             = UDim2.new(0.5,0,1,0);
 		Divider.Size                 = UDim2.new(1,-6,0,1);
@@ -4407,11 +4662,11 @@ function Compkiller:_LoadImageDropdown(BaseParent: TextButton, Callback: () -> a
 			-- highlight selected
 			table.insert(__signals, ToggleDb:Connect(function(bool)
 				local isSelected = IsDefault(item);
-				local targetT    = (isSelected and 0) or 0.5;
+				local targetT    = (isSelected and 0) or 0.25;
 				if bool then
 					Compkiller:_Animation(row.Label, TweenInfo.new(0.2), {TextTransparency = targetT});
 					Compkiller:_Animation(row.Thumb, TweenInfo.new(0.2), {ImageTransparency = targetT});
-					Compkiller:_Animation(row.Divider, TweenInfo.new(0.2), {BackgroundTransparency = 0});
+					Compkiller:_Animation(row.Divider, TweenInfo.new(0.2), {BackgroundTransparency = 0.8});
 				else
 					Compkiller:_Animation(row.Label, TweenInfo.new(0.2), {TextTransparency = 1});
 					Compkiller:_Animation(row.Thumb, TweenInfo.new(0.2), {ImageTransparency = 1});
@@ -4421,8 +4676,8 @@ function Compkiller:_LoadImageDropdown(BaseParent: TextButton, Callback: () -> a
 
 			if ToggleDb:GetValue() then
 				local isSelected = IsDefault(item);
-				row.Label.TextTransparency = isSelected and 0 or 0.5;
-				row.Thumb.ImageTransparency = isSelected and 0 or 0.5;
+				row.Label.TextTransparency = isSelected and 0 or 0.25;
+				row.Thumb.ImageTransparency = isSelected and 0 or 0.25;
 			end;
 
 			-- click to select
@@ -4432,15 +4687,17 @@ function Compkiller:_LoadImageDropdown(BaseParent: TextButton, Callback: () -> a
 				Callback(item);
 			end);
 			
+			local RowHighlighted = false;
 			local function applyHighlight(isHighlighted)
+				RowHighlighted = isHighlighted;
 				if isHighlighted then
 					Compkiller:_Animation(row.Row,TweenInfo.new(0.2),{
-						BackgroundColor3 = Compkiller.Colors.MouseEnter,
+						BackgroundColor3 = Compkiller:_PolishColor("Hover"),
 						BackgroundTransparency = 0
 					})
 					Compkiller:_Animation(row.UIStroke,TweenInfo.new(0.2),{
 						Color = Compkiller.Colors.Highlight,
-						Transparency = 0
+						Transparency = 0.25
 					})
 				else
 					Compkiller:_Animation(row.Row,TweenInfo.new(0.2),{
@@ -4452,6 +4709,8 @@ function Compkiller:_LoadImageDropdown(BaseParent: TextButton, Callback: () -> a
 				end
 			end
 			
+			Compkiller:_BindPolishUpdate(row.Row, function() applyHighlight(RowHighlighted); end);
+
 			btn.InputBegan:Connect(function(input)
 				if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 					applyHighlight(true)
@@ -4462,12 +4721,11 @@ function Compkiller:_LoadImageDropdown(BaseParent: TextButton, Callback: () -> a
 					applyHighlight(false)
 				end
 			end)
-			row.Row.MouseEnter:Connect(function()
+			Compkiller:_Hover(row.Row, function()
 				applyHighlight(true)
-			end)
-			row.Row.MouseLeave:Connect(function()
+			end, function()
 				applyHighlight(false)
-			end)
+			end, true)
 		end;
 	end;
 
@@ -4520,6 +4778,7 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 		local Block = Compkiller:_CreateBlock(Signal);
 
 		Block:SetParent(Parent);
+		Block.Root.Visible = Config.Visible ~= false;
 
 		Block:SetText(Config.Name);
 
@@ -4546,6 +4805,11 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 		local Args = {};
 
 		Args.Flag = Config.Flag;
+		Args.Root = Block.Root;
+		function Args:SetVisible(visible)
+			Config.Visible = visible == true;
+			Block.Root.Visible = Config.Visible;
+		end;
 
 		function Args:SetValue(value)
 			Config.Default = value;
@@ -4593,6 +4857,7 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 		Block:SetLine(EnabledLine);
 
 		Block:SetVisible(Signal:GetValue());
+		Block.Root.Visible = Config.Visible ~= false;
 
 		local Keybind = Block:AddLink('Keybind' , Config.Default);
 
@@ -4607,6 +4872,7 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 				return;
 			end;
 
+			IsBinding = true;
 			Keybind.SetValue("...");
 
 			local Selected = nil;
@@ -4639,6 +4905,13 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 		local Args = {};
 
 		Args.Flag = Config.Flag;
+		function Args:SetVisible(visible)
+			Config.Visible = visible == true;
+			Block.Root.Visible = Config.Visible;
+		end;
+		function Args:IsBinding()
+			return IsBinding;
+		end;
 
 		function Args:SetValue(value)
 			Config.Default = value;
@@ -4745,6 +5018,8 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 			Color = nil
 		});
 
+		local RunCallback, IsBusy = Compkiller:_GuardButtonCallback(Config.Callback, Config);
+
 		local Button = Instance.new("Frame")
 		local BlockLine = Instance.new("Frame")
 		local Frame = Instance.new("Frame")
@@ -4829,9 +5104,9 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 		local isPressing = false
 		
 		local function updateVisuals()
-			if isHovering or isPressing then
+			if (isHovering or isPressing) and not Compkiller:_IsDropdownHoverBlocked(Frame) then
 				Compkiller:_Animation(Frame,TweenInfo.new(0.2),{
-					BackgroundColor3 = Compkiller.Colors.MouseEnter
+					BackgroundColor3 = Compkiller:_PolishColor("Hover", Config.Color)
 				})
 				Compkiller:_Animation(UIStroke,TweenInfo.new(0.2),{
 					Color = Compkiller.Colors.Highlight
@@ -4846,16 +5121,16 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 			end
 		end
 
-		Frame.MouseEnter:Connect(function()
+		Compkiller:_BindPolishUpdate(Frame, updateVisuals);
+
+		Compkiller:_Hover(Frame, function()
 			isHovering = true
 			updateVisuals()
-		end)
-		
-		Frame.MouseLeave:Connect(function()
+		end, function()
 			isHovering = false
 			isPressing = false
 			updateVisuals()
-		end)
+		end, true)
 
 		if Config.PopoutInput then
 			local popout = Instance.new("Frame")
@@ -4864,7 +5139,7 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 			popout.AnchorPoint = Vector2.new(0.5, 0)
 			popout.Position = UDim2.new(0.5, 0, 1, 5)
 			popout.Size = UDim2.new(0, 140, 0, 24)
-			popout.BackgroundColor3 = Compkiller.Colors.DropColor or Color3.fromRGB(30, 30, 30)
+			Compkiller:_BindPolishColor(popout, "BackgroundColor3", "DropColor");
 			popout.Visible = false
 			popout.ZIndex = Zindex + 10
 			
@@ -4873,7 +5148,7 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 			popoutCorner.Parent = popout
 			
 			local popoutStroke = Instance.new("UIStroke")
-			popoutStroke.Color = Compkiller.Colors.StrokeColor or Color3.fromRGB(40, 40, 40)
+			Compkiller:_BindPolishColor(popoutStroke, "Color", "StrokeColor");
 			popoutStroke.Parent = popout
 			
 			local arrow = Instance.new("Frame")
@@ -4882,7 +5157,7 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 			arrow.AnchorPoint = Vector2.new(0.5, 0)
 			arrow.Position = UDim2.new(0.5, 0, 0, -4)
 			arrow.Size = UDim2.new(0, 8, 0, 8)
-			arrow.BackgroundColor3 = popout.BackgroundColor3
+			Compkiller:_BindPolishColor(arrow, "BackgroundColor3", "DropColor");
 			arrow.Rotation = 45
 			arrow.ZIndex = Zindex + 9
 			
@@ -4893,14 +5168,15 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 			inputTb.Position = UDim2.new(0, 5, 0, 0)
 			inputTb.BackgroundTransparency = 1
 			inputTb.PlaceholderText = "File name + Enter"
-			inputTb.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
-			inputTb.TextColor3 = Compkiller.Colors.SwitchColor or Color3.fromRGB(255, 255, 255)
+			Compkiller:_BindPolishColor(inputTb, "PlaceholderColor3", "Placeholder");
+			Compkiller:_BindPolishColor(inputTb, "TextColor3", "SwitchColor");
 			inputTb.Text = ""
 			inputTb.Font = Enum.Font.Gotham
 			inputTb.TextSize = 11
 			inputTb.ZIndex = Zindex + 11
 
 			local btn = Compkiller:_Input(Frame,function()
+				if IsBusy() then return; end;
 				popout.Visible = not popout.Visible
 				if popout.Visible then
 					inputTb:CaptureFocus()
@@ -4925,13 +5201,13 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 				local text = inputTb.Text
 				popout.Visible = false
 				if text ~= "" then
-					Config.Callback(text)
 					inputTb.Text = ""
+					RunCallback(text)
 				end
 			end)
 		else
 			local btn = Compkiller:_Input(Frame,function()
-				Config.Callback();
+				RunCallback();
 			end);
 			
 			btn.InputBegan:Connect(function(input)
@@ -4950,6 +5226,10 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 		end
 
 		local Args = {};
+
+		function Args:IsBusy()
+			return IsBusy();
+		end;
 
 		Args.Signal = Signal:Connect(function(bool)
 			if bool then
@@ -5077,8 +5357,8 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 		    b.Size = size
 		    b.Position = pos
 		    b.Text = txt
-		    b.BackgroundColor3 = Compkiller.Colors.DropColor or Color3.fromRGB(45, 45, 45)
-		    b.TextColor3 = Color3.fromRGB(255, 255, 255)
+		    Compkiller:_BindPolishColor(b, "BackgroundColor3", "DropColor");
+		    Compkiller:_BindPolishColor(b, "TextColor3", "SwitchColor");
 		    b.Font = Enum.Font.GothamMedium
 		    b.TextSize = 12
 		    b.ZIndex = Zindex + 9
@@ -5088,16 +5368,25 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 		    uic.CornerRadius = UDim.new(0, 4)
 		    
 		    local stroke = Instance.new("UIStroke", b)
-		    stroke.Color = Compkiller.Colors.StrokeColor or Color3.fromRGB(35, 35, 35)
+		    Compkiller:_BindPolishColor(stroke, "Color", "StrokeColor");
 
+		    Compkiller:_BindClickRipple(b);
 		    b.MouseButton1Click:Connect(callback)
             
-            b.MouseEnter:Connect(function()
-                Compkiller:_Animation(b, TweenInfo.new(0.15), {BackgroundColor3 = Compkiller.Colors.Highlight or Color3.fromRGB(0, 200, 255)})
-            end)
-            b.MouseLeave:Connect(function()
-                Compkiller:_Animation(b, TweenInfo.new(0.15), {BackgroundColor3 = Compkiller.Colors.DropColor or Color3.fromRGB(45, 45, 45)})
-            end)
+            local Hovered = false;
+            local function UpdateButton()
+                Compkiller:_Animation(b, TweenInfo.new(0.15), {
+                    BackgroundColor3 = Hovered and Compkiller:_PolishColor("Hover") or Compkiller.Colors.DropColor
+                });
+            end;
+            Compkiller:_BindPolishUpdate(b, UpdateButton);
+            Compkiller:_Hover(b, function()
+                Hovered = true;
+                UpdateButton();
+            end, function()
+                Hovered = false;
+                UpdateButton();
+            end);
 
 		    return b
 		end
@@ -5136,13 +5425,14 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
             box.Size = UDim2.new(0, 50, 0, 22)
             box.Position = UDim2.new(pos.X.Scale, pos.X.Offset + 40, pos.Y.Scale, pos.Y.Offset)
             box.Text = tostring(default)
-            box.BackgroundColor3 = Compkiller.Colors.DropColor or Color3.fromRGB(35, 35, 35)
-            box.TextColor3 = Color3.fromRGB(255, 255, 255)
+            Compkiller:_BindPolishColor(box, "BackgroundColor3", "DropColor");
+            Compkiller:_BindPolishColor(box, "TextColor3", "SwitchColor");
             box.Font = Enum.Font.Gotham
             box.TextSize = 11
             box.ZIndex = Zindex + 9
             Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)
-            Instance.new("UIStroke", box).Color = Compkiller.Colors.StrokeColor or Color3.fromRGB(30, 30, 30)
+            local BoxStroke = Instance.new("UIStroke", box);
+            Compkiller:_BindPolishColor(BoxStroke, "Color", "StrokeColor");
             
             box.FocusLost:Connect(function()
                 local num = tonumber(box.Text)
@@ -5695,7 +5985,7 @@ end
 		DescriptionText.ZIndex = Zindex + 5
 		DescriptionText.Font = Enum.Font.Gotham
 		DescriptionText.Text = Config.Content
-		DescriptionText.TextColor3 = Color3.fromRGB(226, 236, 248) -- Clear reading text
+		Compkiller:_BindPolishColor(DescriptionText, "TextColor3", "MutedText");
 		DescriptionText.TextSize = 14.000
 		DescriptionText.TextTransparency = 0.000 -- Full opacity to pop out
 		DescriptionText.TextWrapped = true -- Allows text to wrap
@@ -5710,7 +6000,7 @@ end
 			DescriptionText.TextYAlignment = Enum.TextYAlignment.Center
 		end
 
-		-- Removed from theme engine to preserve custom color
+		-- Reading text follows the active theme while retaining its softer tone.
 
         local HasViewport = Config.Model ~= nil
         local scaleQueued = false
@@ -6096,16 +6386,16 @@ return Args;
     table.insert(Compkiller.Elements.SwitchColor , { Element = Btn2Text, Property = 'TextColor3' });
 
     Compkiller:_Hover(Btn1,function()
-        Compkiller:_Animation(Btn1,TweenInfo.new(0.3),{ BackgroundColor3 = Compkiller.Colors.MouseEnter });
+        Compkiller:_Animation(Btn1,TweenInfo.new(0.3),{ BackgroundColor3 = Compkiller:_PolishColor("Hover") });
     end,function()
         Compkiller:_Animation(Btn1,TweenInfo.new(0.3),{ BackgroundColor3 = Compkiller.Colors.DropColor });
-    end);
+    end, true);
 
     Compkiller:_Hover(Btn2,function()
-        Compkiller:_Animation(Btn2,TweenInfo.new(0.3),{ BackgroundColor3 = Compkiller.Colors.MouseEnter });
+        Compkiller:_Animation(Btn2,TweenInfo.new(0.3),{ BackgroundColor3 = Compkiller:_PolishColor("Hover") });
     end,function()
         Compkiller:_Animation(Btn2,TweenInfo.new(0.3),{ BackgroundColor3 = Compkiller.Colors.DropColor });
-    end);
+    end, true);
 
     Compkiller:_Input(Btn1, Config.Button1Callback)
 
@@ -6351,6 +6641,7 @@ return Args;
 		TextBox_2.ClearTextOnFocus = false
 		TextBox_2.Font = Enum.Font.GothamMedium
 		TextBox_2.PlaceholderText = Config.Placeholder
+		Compkiller:_BindPolishColor(TextBox_2, "PlaceholderColor3", "Placeholder");
 		TextBox_2.Text = Config.Default
 		TextBox_2.TextColor3 = Compkiller.Colors.SwitchColor
 		TextBox_2.TextSize = 11.000
@@ -6596,9 +6887,10 @@ return Args;
 			actionBtn.AnchorPoint = Vector2.new(1, 0)
 			actionBtn.Position = UDim2.new(1, -12, 0, 4)
 			actionBtn.Size = UDim2.new(0, 65, 0, 18)
-			actionBtn.BackgroundColor3 = Config.ActionButton.Color or Color3.fromRGB(40, 200, 80)
+			actionBtn.BackgroundColor3 = Config.ActionButton.Color or Compkiller.Colors.Toggle
+			if not Config.ActionButton.Color then Compkiller:_BindPolishColor(actionBtn, "BackgroundColor3", "Toggle"); end;
 			actionBtn.Text = Config.ActionButton.Text or "Action"
-			actionBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+			Compkiller:_BindPolishColor(actionBtn, "TextColor3", "SwitchColor");
 			actionBtn.Font = Enum.Font.GothamBold
 			actionBtn.TextSize = 11
 			actionBtn.ZIndex = Zindex + 5
@@ -6613,7 +6905,7 @@ return Args;
 			popout.AnchorPoint = Vector2.new(1, 0.5)
 			popout.Position = UDim2.new(1, -85, 0, 13)
 			popout.Size = UDim2.new(0, 140, 0, 24)
-			popout.BackgroundColor3 = Compkiller.Colors.DropColor or Color3.fromRGB(30, 30, 30)
+			Compkiller:_BindPolishColor(popout, "BackgroundColor3", "DropColor");
 			popout.Visible = false
 			popout.ZIndex = Zindex + 10
 			
@@ -6622,7 +6914,7 @@ return Args;
 			popoutCorner.Parent = popout
 			
 			local popoutStroke = Instance.new("UIStroke")
-			popoutStroke.Color = Compkiller.Colors.StrokeColor or Color3.fromRGB(40, 40, 40)
+			Compkiller:_BindPolishColor(popoutStroke, "Color", "StrokeColor");
 			popoutStroke.Parent = popout
 			
 			local arrow = Instance.new("Frame")
@@ -6631,7 +6923,7 @@ return Args;
 			arrow.AnchorPoint = Vector2.new(0, 0.5)
 			arrow.Position = UDim2.new(1, -4, 0.5, 0)
 			arrow.Size = UDim2.new(0, 8, 0, 8)
-			arrow.BackgroundColor3 = popout.BackgroundColor3
+			Compkiller:_BindPolishColor(arrow, "BackgroundColor3", "DropColor");
 			arrow.Rotation = 45
 			arrow.ZIndex = Zindex + 9
 			
@@ -6642,13 +6934,14 @@ return Args;
 			inputTb.Position = UDim2.new(0, 5, 0, 0)
 			inputTb.BackgroundTransparency = 1
 			inputTb.PlaceholderText = "File name + Enter"
-			inputTb.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
-			inputTb.TextColor3 = Compkiller.Colors.SwitchColor or Color3.fromRGB(255, 255, 255)
+			Compkiller:_BindPolishColor(inputTb, "PlaceholderColor3", "Placeholder");
+			Compkiller:_BindPolishColor(inputTb, "TextColor3", "SwitchColor");
 			inputTb.Text = ""
 			inputTb.Font = Enum.Font.Gotham
 			inputTb.TextSize = 11
 			inputTb.ZIndex = Zindex + 11
 
+			Compkiller:_BindClickRipple(actionBtn);
 			actionBtn.MouseButton1Click:Connect(function()
 				popout.Visible = not popout.Visible
 				if popout.Visible then
@@ -6656,14 +6949,16 @@ return Args;
 				end
 			end)
 
+			local SubmitAction = Compkiller:_GuardButtonCallback(function(text)
+				if Config.ActionButton.Callback then Config.ActionButton.Callback(text); end;
+			end, Config.ActionButton);
+
 			inputTb.FocusLost:Connect(function(enterPressed)
 				local text = inputTb.Text
 				popout.Visible = false
 				if text ~= "" then
-					if Config.ActionButton.Callback then
-						Config.ActionButton.Callback(text)
-					end
 					inputTb.Text = ""
+					SubmitAction(text)
 				end
 			end)
 		end
@@ -6686,9 +6981,10 @@ return Args;
 				actionBtn2.Position = UDim2.new(1, -12, 0, 4)
 			end
 			actionBtn2.Size = UDim2.new(0, 65, 0, 18)
-			actionBtn2.BackgroundColor3 = Config.ActionButton2.Color or Color3.fromRGB(40, 100, 200)
+			actionBtn2.BackgroundColor3 = Config.ActionButton2.Color or Compkiller.Colors.DropColor
+			if not Config.ActionButton2.Color then Compkiller:_BindPolishColor(actionBtn2, "BackgroundColor3", "DropColor"); end;
 			actionBtn2.Text = Config.ActionButton2.Text or "Action 2"
-			actionBtn2.TextColor3 = Color3.fromRGB(255, 255, 255)
+			Compkiller:_BindPolishColor(actionBtn2, "TextColor3", "SwitchColor");
 			actionBtn2.Font = Enum.Font.GothamBold
 			actionBtn2.TextSize = 11
 			actionBtn2.ZIndex = Zindex + 5
@@ -6697,11 +6993,11 @@ return Args;
 			btnCorner2.CornerRadius = UDim.new(0, 4)
 			btnCorner2.Parent = actionBtn2
 
-			actionBtn2.MouseButton1Click:Connect(function()
-				if Config.ActionButton2.Callback then
-					Config.ActionButton2.Callback()
-				end
-			end)
+			Compkiller:_BindClickRipple(actionBtn2);
+			local RunAction = Compkiller:_GuardButtonCallback(function()
+				if Config.ActionButton2.Callback then Config.ActionButton2.Callback(); end;
+			end, Config.ActionButton2);
+			actionBtn2.MouseButton1Click:Connect(RunAction)
 		end
 
 		table.insert(Compkiller.Elements.LineColor,{
@@ -6788,9 +7084,9 @@ return Args;
 		local isPressing = false
 		
 		local function updateVisuals()
-			if isHovering or isPressing then
+			if (isHovering or isPressing) and not Compkiller:_IsDropdownHoverBlocked(ValueItems) then
 				Compkiller:_Animation(ValueItems,TweenInfo.new(0.2),{
-					BackgroundColor3 = Compkiller.Colors.MouseEnter
+					BackgroundColor3 = Compkiller:_PolishColor("Hover")
 				})
 				Compkiller:_Animation(UIStroke,TweenInfo.new(0.2),{
 					Color = Compkiller.Colors.Highlight
@@ -6805,16 +7101,16 @@ return Args;
 			end
 		end
 
-		ValueItems.MouseEnter:Connect(function()
+		Compkiller:_BindPolishUpdate(ValueItems, updateVisuals);
+
+		Compkiller:_Hover(ValueItems, function()
 			isHovering = true
 			updateVisuals()
-		end)
-		
-		ValueItems.MouseLeave:Connect(function()
+		end, function()
 			isHovering = false
 			isPressing = false
 			updateVisuals()
-		end)
+		end, true)
 
 		local repi;
 		local Button = Compkiller:_Input(ValueItems);
@@ -7138,9 +7434,9 @@ return Args;
 		local isPressing = false
 		
 		local function updateVisuals()
-			if isHovering or isPressing then
+			if (isHovering or isPressing) and not Compkiller:_IsDropdownHoverBlocked(ValueItems) then
 				Compkiller:_Animation(ValueItems,TweenInfo.new(0.2),{
-					BackgroundColor3 = Compkiller.Colors.MouseEnter
+					BackgroundColor3 = Compkiller:_PolishColor("Hover")
 				})
 				Compkiller:_Animation(UIStroke,TweenInfo.new(0.2),{
 					Color = Compkiller.Colors.Highlight
@@ -7155,16 +7451,16 @@ return Args;
 			end
 		end
 
-		ValueItems.MouseEnter:Connect(function()
+		Compkiller:_BindPolishUpdate(ValueItems, updateVisuals);
+
+		Compkiller:_Hover(ValueItems, function()
 			isHovering = true
 			updateVisuals()
-		end)
-		
-		ValueItems.MouseLeave:Connect(function()
+		end, function()
 			isHovering = false
 			isPressing = false
 			updateVisuals()
-		end)
+		end, true)
 
 		local Button = Compkiller:_Input(ValueItems);
 		if Config.Upwards then
@@ -7627,6 +7923,7 @@ function Compkiller:RefreshCurrentColor()
 			v.Element[v.Property] = Compkiller.Colors.HighStrokeColor;
 		end;
 	end;
+	Compkiller:_RefreshPolishColors();
 end;
 
 function Compkiller:GetThemeString()
@@ -7667,6 +7964,7 @@ function Compkiller:ChangeHighlightColor(NewColor: Color3)
 			v.Element[v.Property] = NewColor;
 		end;
 	end;
+	Compkiller:_RefreshPolishColors();
 end;
 
 function Compkiller.new(Config : Window)
@@ -7687,14 +7985,14 @@ function Compkiller.new(Config : Window)
 		TextSize = 15
 	});
 
-	local TabHover = Compkiller.__SIGNAL(false);
+	local TabHover = Compkiller.__SIGNAL(true);
 	local WindowOpen = Compkiller.__SIGNAL(true);
 	local WindowArgs = {
 		SelectedTab = nil,
 		Tabs = {},
 		LastTab = nil,
 		IsOpen = true,
-		AlwayShowTab = false,
+		AlwayShowTab = true,
 		THREADS = {},
 		PerformanceMode = false,
 		Notify = Compkiller.newNotify()
@@ -7707,6 +8005,7 @@ function Compkiller.new(Config : Window)
 	end;
 
 	Compkiller:_CleanupPreviousWindows();
+	Compkiller:_RestoreBrandBindings();
 
 	for _, child in ipairs(CoreGui:GetChildren()) do
 		if child:IsA("ScreenGui") and string.find(child.Name, "compkiller") then
@@ -7764,7 +8063,29 @@ function Compkiller.new(Config : Window)
 	MainFrame.BorderColor3 = Color3.fromRGB(0, 0, 0)
 	MainFrame.BorderSizePixel = 0
 	MainFrame.Position = UDim2.fromScale(0.5,0.5);
-	MainFrame.Size = Compkiller.Scale.Window
+	MainFrame.Size = Config.Scale
+
+	do
+		local FitScale = Instance.new("UIScale", MainFrame);
+		FitScale.Name = "ViewportFit";
+		local function FitViewport()
+			local Viewport = CompKiller.AbsoluteSize;
+			if Viewport.X <= 0 or Viewport.Y <= 0 then return; end;
+			local Width = Viewport.X * Config.Scale.X.Scale + Config.Scale.X.Offset;
+			local Height = Viewport.Y * Config.Scale.Y.Scale + Config.Scale.Y.Offset;
+			-- Expanded sidebar extends 160 logical pixels left of the main frame.
+			-- Keep breathing room instead of filling a small Roblox window edge to edge.
+			local Scale = math.min(1, Viewport.X * 0.75 / math.max(1, Width + 160),
+				Viewport.Y * 0.75 / math.max(1, Height));
+			FitScale.Scale = Scale;
+			WindowArgs.ResolutionScale = Scale;
+			-- Recenter after rotation/resizing, including the sidebar footprint.
+			MainFrame.Position = UDim2.new(0.5, 80 * Scale, 0.5, 0);
+		end;
+		local Connection = CompKiller:GetPropertyChangedSignal("AbsoluteSize"):Connect(FitViewport);
+		CompKiller.Destroying:Connect(function() Connection:Disconnect(); end);
+		FitViewport();
+	end;
 	MainFrame.ZIndex = 4
 
 	MainFrame:GetPropertyChangedSignal('BackgroundTransparency'):Connect(function()
@@ -8113,6 +8434,51 @@ function Compkiller.new(Config : Window)
 			});
 		end;
 	end);
+
+	-- Only the window's polling animations use this cache. Other controls keep
+	-- _Animation's existing behavior, including its returned Tween and events.
+	local WindowAnimationTargets = {};
+	local function AnimateWindowTarget(Element, Duration, Properties)
+		local Previous = WindowAnimationTargets[Element];
+		local SameTarget = Previous and Previous.Duration == Duration;
+
+		if SameTarget then
+			for Property, Value in pairs(Properties) do
+				if Previous.Properties[Property] ~= Value then
+					SameTarget = false;
+					break;
+				end;
+			end;
+			for Property in pairs(Previous.Properties) do
+				if Properties[Property] == nil then
+					SameTarget = false;
+					break;
+				end;
+			end;
+		end;
+
+		if SameTarget then
+			if Previous.Tween.PlaybackState == Enum.PlaybackState.Playing then
+				return;
+			end;
+			local AtTarget = true;
+			for Property, Value in pairs(Properties) do
+				if Element[Property] ~= Value then
+					AtTarget = false;
+					break;
+				end;
+			end;
+			if AtTarget then
+				return;
+			end;
+		end;
+
+		WindowAnimationTargets[Element] = {
+			Duration = Duration,
+			Properties = Properties,
+			Tween = Compkiller:_Animation(Element, TweenInfo.new(Duration), Properties)
+		};
+	end;
 
 	function WindowArgs:DrawCategory(config : Category)
 		config = config or {};
@@ -9012,7 +9378,7 @@ function Compkiller.new(Config : Window)
 		TextBox.ZIndex = 15
 		TextBox.ClearTextOnFocus = false
 		TextBox.Font = Enum.Font.GothamMedium
-		TextBox.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+		Compkiller:_BindPolishColor(TextBox, "PlaceholderColor3", "Placeholder");
 		TextBox.PlaceholderText = "Config Name..."
 		TextBox.Text = ""
 		TextBox.TextColor3 = Compkiller.Colors.SwitchColor
@@ -9394,7 +9760,7 @@ function Compkiller.new(Config : Window)
 			UICorner.Parent = DelButton
 			ConfigBlock.Name = Compkiller:_RandomString()
 			ConfigBlock.Parent = ScrollingFrame
-			ConfigBlock.BackgroundColor3 = Color3.fromRGB(33, 34, 40)
+			Compkiller:_BindPolishColor(ConfigBlock, "BackgroundColor3", "DropColor");
 			ConfigBlock.BorderColor3 = Color3.fromRGB(0, 0, 0)
 			ConfigBlock.BorderSizePixel = 0
 			ConfigBlock.BackgroundTransparency = 1
@@ -9659,6 +10025,7 @@ function Compkiller.new(Config : Window)
             end
             ConfigButton:SetAutoLoad(false)
             AutoLabel.Visible, AutoToggle.Visible = false, false
+            Compkiller:_BindClickRipple(AutoToggle);
             AutoToggle.MouseButton1Click:Connect(function()
                 if ConfigButton.OnAutoLoad then ConfigButton.OnAutoLoad(not ConfigButton.AutoLoad) end
             end)
@@ -9793,17 +10160,18 @@ function Compkiller.new(Config : Window)
 
 			ConfigButton:Update();
 
-			Compkiller:_Input(LoadButton,function()
-				task.spawn(ConfigButton.OnLoad);
-			end);
+			Compkiller:_Input(LoadButton, Compkiller:_GuardButtonCallback(function()
+				Compkiller:_SpawnButtonTask(ConfigButton.OnLoad);
+			end));
 
-			Compkiller:_Input(SaveButton,function()
-				task.spawn(ConfigButton.OnSave);
-			end);
+			Compkiller:_Input(SaveButton, Compkiller:_GuardButtonCallback(function()
+				Compkiller:_SpawnButtonTask(ConfigButton.OnSave);
+			end));
 
-			DelButton.MouseButton1Click:Connect(function()
-				task.spawn(ConfigButton.OnDelete);
-			end)
+			Compkiller:_BindClickRipple(DelButton);
+			DelButton.MouseButton1Click:Connect((Compkiller:_GuardButtonCallback(function()
+				Compkiller:_SpawnButtonTask(ConfigButton.OnDelete);
+			end)))
 
 			ConfigButton.OnLoad = nil;
 			ConfigButton.OnSave = nil;
@@ -10672,37 +11040,34 @@ function Compkiller.new(Config : Window)
 		ImageLabel.SizeConstraint = Enum.SizeConstraint.RelativeYY
 		ImageLabel.ZIndex = 151
 		ImageLabel.Image = Config.Logo
-		ImageLabel.ImageColor3 = Compkiller.Colors.Highlight
-		table.insert(Compkiller.Elements.Highlight, {
-			Element = ImageLabel,
-			Property = "ImageColor3"
-		});
+		ImageLabel:SetAttribute("ButterRestoreIcon", true);
+		Compkiller:_BindPolishColor(ImageLabel, "ImageColor3", "RestoreIcon");
 		ImageLabel.ImageTransparency = 1
 		ImageLabel.ClipsDescendants = false;
 
-		local ToggleCloseUI = function(v)
+		local ToggleCloseUI = function(v, imageTransparency)
 			ImageLabel.Image = Config.Logo;
 
 			if v then
 				ImageLabel.ClipsDescendants = true;
 
-				Compkiller:_Animation(CloseWindow,TweenInfo.new(0.2),{
+				AnimateWindowTarget(CloseWindow,0.2,{
 					Size = UDim2.new(0, 45, 0, 23),
 					BackgroundTransparency = 0.025
 				})
 
-				Compkiller:_Animation(ImageLabel,TweenInfo.new(0.2),{
-					ImageTransparency = (ImageLabel:GetAttribute('Hover') and 0.1) or 0.35
+				AnimateWindowTarget(ImageLabel,0.2,{
+					ImageTransparency = imageTransparency or (ImageLabel:GetAttribute('Hover') and 0.02) or 0.12
 				})
 			else
 				ImageLabel.ClipsDescendants = false;
 
-				Compkiller:_Animation(CloseWindow,TweenInfo.new(0.2),{
+				AnimateWindowTarget(CloseWindow,0.2,{
 					Size = UDim2.new(0, 0, 0, 23),
 					BackgroundTransparency = 1
 				})
 
-				Compkiller:_Animation(ImageLabel,TweenInfo.new(0.2),{
+				AnimateWindowTarget(ImageLabel,0.2,{
 					ImageTransparency = 1
 				})
 			end;
@@ -10714,7 +11079,7 @@ function Compkiller.new(Config : Window)
 			local Logo = Instance.new("Frame")
 			local UICorner_2 = Instance.new("UICorner")
 			local Frame = Instance.new("Frame")
-			local CompLogo = Instance.new("ImageLabel")
+			local CompLogo = Compkiller:_CreateBrandIcon(nil, Config.Logo)
 			local WaternarkList = Instance.new("Frame")
 			local UIListLayout = Instance.new("UIListLayout")
 
@@ -10796,11 +11161,6 @@ function Compkiller.new(Config : Window)
 			CompLogo.SizeConstraint = Enum.SizeConstraint.RelativeYY
 			CompLogo.ZIndex = 159
 			CompLogo.Image = Config.Logo
-			CompLogo.ImageColor3 = Compkiller.Colors.Highlight
-			table.insert(Compkiller.Elements.Highlight, {
-				Element = CompLogo,
-				Property = "ImageColor3"
-			});
 
 			WaternarkList.Name = Compkiller:_RandomString()
 			WaternarkList.Parent = Watermark
@@ -10830,15 +11190,33 @@ function Compkiller.new(Config : Window)
 			BackFrame.Position = UDim2.new(1, 0, 0.5, 0)
 			BackFrame.Size = UDim2.new(1, 30, 1, 0)
 
-			Compkiller:_Blur(BackFrame,WindowOpen);
+			local BlurVisible = Compkiller.__SIGNAL(WindowOpen:GetValue());
+			Compkiller:_Blur(BackFrame, BlurVisible);
+			local BlurWindowConnection = WindowOpen:Connect(function(Open)
+				BlurVisible:Fire(Open and Watermark.Visible);
+			end);
+			Watermark.Destroying:Connect(function() BlurWindowConnection:Disconnect(); end);
 
+			local LastWidth = 45;
 			UIListLayout:GetPropertyChangedSignal('AbsoluteContentSize'):Connect(function()
+				local Width = math.max(45, math.ceil(UIListLayout.AbsoluteContentSize.X + 8));
+				if Width == LastWidth then return; end;
+				LastWidth = Width;
 				Compkiller:_Animation(Watermark,TweenInfo.new(0.4),{
-					Size = UDim2.new(0, UIListLayout.AbsoluteContentSize.X + 8, 0, 23)
+					Size = UDim2.new(0, Width, 0, 23)
 				});
 			end)
 
-			local Args = {};
+			local Args = {Root = Watermark, Logo = CompLogo};
+
+			function Args:SetVisible(Value)
+				Watermark.Visible = Value == true;
+				BlurVisible:Fire(Watermark.Visible and WindowOpen:GetValue());
+			end;
+
+			function Args:GetVisible()
+				return Watermark.Visible;
+			end;
 
 			function Args:AddText(Watermark : Watermark)
 				Watermark = Compkiller.__CONFIG(Watermark, {
@@ -10880,10 +11258,27 @@ function Compkiller.new(Config : Window)
 					});
 				end;
 
+				-- Natural sizing keeps status and balance entries compact by default.
+				-- StableWidth explicitly opts into retaining the largest width.
+				local WidestDigit, DigitWidth = "0", 0;
+				if Watermark.StableWidth == true then
+					for Digit = 0, 9 do
+						local Width = TextService:GetTextSize(tostring(Digit), TextLabel.TextSize, TextLabel.Font, Vector2.new(math.huge, math.huge)).X;
+						if Width > DigitWidth then WidestDigit, DigitWidth = tostring(Digit), Width; end;
+					end;
+				end;
+				local function Measure(Text)
+					if Watermark.StableWidth == true then Text = Text:gsub("%d", WidestDigit); end;
+					return math.ceil(TextService:GetTextSize(Text, TextLabel.TextSize, TextLabel.Font, Vector2.new(math.huge, math.huge)).X) + 2;
+				end;
+				local MinimumWidth = math.max(0, tonumber(Watermark.MinWidth) or 0, Watermark.WidthSample and Measure(Watermark.WidthSample) or 0);
+				local ReservedWidth = MinimumWidth;
 				local Update = function()
-					local scale = TextService:GetTextSize(TextLabel.Text,TextLabel.TextSize,TextLabel.Font,Vector2.new(math.huge,math.huge));
-
-					TextLabel.Size = UDim2.new(0, scale.X + 2, 0.7, 0)
+					local Width = Measure(TextLabel.Text);
+					ReservedWidth = Watermark.StableWidth == true and math.max(ReservedWidth, Width) or math.max(MinimumWidth, Width);
+					if TextLabel.Size.X.Offset ~= ReservedWidth then
+						TextLabel.Size = UDim2.new(0, ReservedWidth, 0.7, 0);
+					end;
 				end;
 
 				Update()
@@ -10948,21 +11343,7 @@ function Compkiller.new(Config : Window)
 		local mobileThread = task.spawn(function()
 			while true do task.wait(0.15)
 				if Compkiller:_IsMobile() then
-					ToggleCloseUI(true);
-
-					if WindowArgs.IsOpen then
-						Compkiller:_Animation(ImageLabel,TweenInfo.new(0.2),{
-							ImageTransparency = 0.35
-						});
-
-						ImageLabel:GetAttribute("Hover",false);
-					else
-						ImageLabel:GetAttribute("Hover",true);
-
-						Compkiller:_Animation(ImageLabel,TweenInfo.new(0.2),{
-							ImageTransparency = 0.1
-						});
-					end;
+					ToggleCloseUI(true, WindowArgs.IsOpen and 0.12 or 0.02);
 				else
 					if not WindowArgs.IsOpen then
 						ToggleCloseUI(true);
@@ -11011,8 +11392,6 @@ function Compkiller.new(Config : Window)
 	end;
 
 	WindowArgs.LOOP_THREAD = task.spawn(function()
-		local TimeTic = tick();
-
 		local BlurElement = Instance.new("Frame")
 
 		BlurElement.Name = Compkiller:_RandomString()
@@ -11048,35 +11427,35 @@ function Compkiller.new(Config : Window)
 		});
 
 		while true do task.wait(0.05);
-			BlurElement.Size = UDim2.new(1, TabFrame.AbsoluteSize.X - 35, 1, 0);
-			MovementFrame.Size = UDim2.new(1, TabFrame.AbsoluteSize.X - 35, 1, 0);
+			BlurElement.Size = UDim2.new(1, TabFrame.AbsoluteSize.X / (WindowArgs.ResolutionScale or 1) - 35, 1, 0);
+			MovementFrame.Size = UDim2.new(1, TabFrame.AbsoluteSize.X / (WindowArgs.ResolutionScale or 1) - 35, 1, 0);
 
 			SelectionFrame.BackgroundColor3 = Compkiller.Colors.Highlight;
 
 			if WindowArgs.SelectedTab and WindowArgs.IsOpen then
-				local vili = -(TabButtons.AbsolutePosition.Y - WindowArgs.SelectedTab.AbsolutePosition.Y) + 2;
+				local vili = -(TabButtons.AbsolutePosition.Y - WindowArgs.SelectedTab.AbsolutePosition.Y) / (WindowArgs.ResolutionScale or 1) + 2;
 				local distance = (SelectionFrame.Position.Y.Offset - vili);
 
-				if vili < 0 or vili > TabButtons.AbsoluteSize.Y then
-					Compkiller:_Animation(SelectionFrame , TweenInfo.new(0.1) , {
+				if vili < 0 or vili > TabButtons.AbsoluteSize.Y / (WindowArgs.ResolutionScale or 1) then
+					AnimateWindowTarget(SelectionFrame, 0.1, {
 						BackgroundTransparency = 1
 					});
 				else
 					if math.abs(distance) <= 10 then
-						Compkiller:_Animation(SelectionFrame , TweenInfo.new(0.1) , {
+						AnimateWindowTarget(SelectionFrame, 0.1, {
 							BackgroundTransparency = 0
 						});
 
 						SelectionFrame.Position = UDim2.new(1,5,0,math.ceil(vili));
 					else
-						Compkiller:_Animation(SelectionFrame , TweenInfo.new(0.15) , {
+						AnimateWindowTarget(SelectionFrame, 0.15, {
 							BackgroundTransparency = 0,
 							Position = UDim2.new(1,5,0,math.ceil(vili))
 						});
 					end;
 				end;
 			else
-				Compkiller:_Animation(SelectionFrame , TweenInfo.new(0.15) , {
+				AnimateWindowTarget(SelectionFrame, 0.15, {
 					BackgroundTransparency = 1
 				});
 			end;
@@ -11125,7 +11504,7 @@ function Compkiller.new(Config : Window)
 				TabHover:Fire(false);
 			end
 		end);
-	end);
+	end, false); -- Tab expansion is layout behavior, not a control highlight.
 
 	return WindowArgs;
 end;
@@ -11594,7 +11973,7 @@ function Compkiller.newNotify()
 			local BlockFrame = Instance.new("Frame")
 			local NotifyFrame = Instance.new("Frame")
 			local UICorner = Instance.new("UICorner")
-			local CompLogo = Instance.new("ImageLabel")
+			local CompLogo = Compkiller:_CreateBrandIcon(nil, Notify.Icon)
 			local Header = Instance.new("TextLabel")
 			local Body = Instance.new("TextLabel")
 			local TimeLeftFrame = Instance.new("Frame")
@@ -11605,7 +11984,7 @@ function Compkiller.newNotify()
 			BlockFrame.Name = Compkiller:_RandomString()
 			BlockFrame.Parent = NotifyContainer
 			BlockFrame.AnchorPoint = Vector2.new(1, 0)
-			BlockFrame.BackgroundColor3 = Color3.fromRGB(22, 24, 29)
+			Compkiller:_BindPolishColor(BlockFrame, "BackgroundColor3", "Popup");
 			BlockFrame.BackgroundTransparency = 1.000
 			BlockFrame.BorderColor3 = Color3.fromRGB(0, 0, 0)
 			BlockFrame.BorderSizePixel = 0
@@ -11615,7 +11994,7 @@ function Compkiller.newNotify()
 
 			NotifyFrame.Name = Compkiller:_RandomString()
 			NotifyFrame.Parent = BlockFrame
-			NotifyFrame.BackgroundColor3 = Color3.fromRGB(22, 24, 29)
+			Compkiller:_BindPolishColor(NotifyFrame, "BackgroundColor3", "Popup");
 			NotifyFrame.BackgroundTransparency = 0.100
 			NotifyFrame.BorderColor3 = Color3.fromRGB(0, 0, 0)
 			NotifyFrame.BorderSizePixel = 0
@@ -11636,12 +12015,7 @@ function Compkiller.newNotify()
 			CompLogo.Position = UDim2.new(0, 6, 0, 6)
 			CompLogo.Size = UDim2.new(0, 25, 0, 25)
 			CompLogo.ZIndex = 4
-			CompLogo.Image = "rbxassetid://102337949802265";
-			CompLogo.ImageColor3 = Compkiller.Colors.Highlight;
-			table.insert(Compkiller.Elements.Highlight, {
-				Element = CompLogo,
-				Property = "ImageColor3"
-			});
+			CompLogo.Image = Notify.Icon;
 
 			Header.Name = Compkiller:_RandomString()
 			Header.Parent = NotifyFrame
@@ -11654,7 +12028,7 @@ function Compkiller.newNotify()
 			Header.ZIndex = 3
 			Header.Font = Enum.Font.GothamBold
 			Header.Text = Notify.Title
-			Header.TextColor3 = Compkiller.Colors.SwitchColor
+			Compkiller:_BindPolishColor(Header, "TextColor3", "SwitchColor");
 			Header.TextSize = 14.000
 			Header.TextXAlignment = Enum.TextXAlignment.Left
 
@@ -11669,9 +12043,9 @@ function Compkiller.newNotify()
 			Body.ZIndex = 3
 			Body.Font = Enum.Font.GothamMedium
 			Body.Text = Notify.Content
-			Body.TextColor3 = Compkiller.Colors.SwitchColor
+			Compkiller:_BindPolishColor(Body, "TextColor3", "SwitchColor");
 			Body.TextSize = 12.000
-			Body.TextTransparency = 0.500
+			Body.TextTransparency = 0.250
 			Body.TextXAlignment = Enum.TextXAlignment.Left
 			Body.TextYAlignment = Enum.TextYAlignment.Top
 
