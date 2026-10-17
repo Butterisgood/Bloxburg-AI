@@ -2419,7 +2419,7 @@ function Compkiller:_AddLinkValue(Name , Default , GlobalBlock , LinkValues , re
 			Property = "BackgroundColor3"
 		})
 
-		UICorner.CornerRadius = UDim.new(1, 0)
+		UICorner.CornerRadius = UDim.new(0, 4)
 		UICorner.Parent = Toggle
 
 		UIStroke.Color = Compkiller.Colors.HighStrokeColor
@@ -2441,7 +2441,7 @@ function Compkiller:_AddLinkValue(Name , Default , GlobalBlock , LinkValues , re
 		ToggleValue.SizeConstraint = Enum.SizeConstraint.RelativeYY
 		ToggleValue.ZIndex = GlobalBlock.ZIndex + 2
 
-		UICorner_2.CornerRadius = UDim.new(1, 0)
+		UICorner_2.CornerRadius = UDim.new(0, 3)
 		UICorner_2.Parent = ToggleValue;
 
 		local ToggleElement = function(bool,noChange)
@@ -6027,7 +6027,7 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 			if denom <= 0 then
 				return 1
 			end
-			return math.clamp((val - Config.Min) / denom, 0.045, 1)
+			return math.clamp((val - Config.Min) / denom, 0, 1)
 		end
 
 		SliderInput.Size = UDim2.new(GetScale(Config.Default), 0, 1, 0)
@@ -8581,6 +8581,7 @@ function Compkiller.new(Config : Window)
 		Size = Config.Scale
 	});
 
+	UICorner.CornerRadius = UDim.new(0, 6)
 	UICorner.Parent = MainFrame
 
 	local TabFrameBaseTrans = 0.25;
@@ -8603,6 +8604,7 @@ function Compkiller.new(Config : Window)
 	TabFrame.Position = UDim2.new(0, 25, 0, 0)
 	TabFrame.Size = UDim2.new(0, 85, 1, 0)
 
+	UICorner_2.CornerRadius = UDim.new(0, 6)
 	UICorner_2.Parent = TabFrame
 
 	LineFrame1.Name = Compkiller:_RandomString()
@@ -8675,7 +8677,7 @@ function Compkiller.new(Config : Window)
 		Property = "BackgroundColor3"
 	});
 
-	UICorner_3.CornerRadius = UDim.new(1, 0)
+	UICorner_3.CornerRadius = UDim.new(0, 2)
 	UICorner_3.Parent = SelectionFrame
 
 	TabButtonScrollingFrame.Name = Compkiller:_RandomString()
@@ -11310,7 +11312,7 @@ function Compkiller.new(Config : Window)
 			Section.ZIndex = 9
 			Section.ClipsDescendants = true;
 
-			UICorner.CornerRadius = UDim.new(0, 6)
+			UICorner.CornerRadius = UDim.new(0, 5)
 			UICorner.Parent = Section
 
 			UIStroke.Color = Compkiller.Colors.StrokeColor
