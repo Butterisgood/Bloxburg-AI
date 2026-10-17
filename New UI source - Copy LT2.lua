@@ -161,6 +161,9 @@ export type Dropdown = {
 	Default: string | {string},
 	Values: {string},
 	Multi: boolean,
+	Preview: ((Value: any, IsActive: () -> boolean, Index: number?) -> (Instance?, string?, number?, number?))?,
+	PreviewOptions: {Default: string?, Persistent: boolean?}?,
+	ItemIcon: ((Value: string) -> string)?,
 	Callback: (Value: string | {[string]: boolean}) -> any?
 };
 
@@ -385,6 +388,57 @@ Compkiller.IaDrag = false;
 Compkiller.LastDrag = tick();
 Compkiller.Flags = {};
 
+-- One estimator for every task progress display. Renderers keep their raw labels.
+Compkiller.ProgressETA = {}
+do
+    local eta = Compkiller.ProgressETA
+    function eta.New(started)
+        return {Started = started or os.clock()}
+    end
+    function eta.Format(seconds)
+        seconds = math.max(0, math.ceil(seconds))
+        if seconds < 60 then return tostring(seconds) .. "s" end
+        if seconds < 3600 then return string.format("%dm %ds", math.floor(seconds / 60), seconds % 60) end
+        return string.format("%dh %dm", math.floor(seconds / 3600), math.floor(seconds / 60) % 60)
+    end
+    function eta.Update(state, label, fraction, current, total)
+        label = tostring(label or "")
+        label = label:match("^(.-)%s*•%s*ETA:.*$") or label
+        if current == nil or total == nil then
+            local done, count = label:match("%(%s*(%d+)%s*/%s*(%d+)")
+            if not done then done, count = label:match("(%d+)%s*/%s*(%d+)") end
+            current, total = tonumber(done), tonumber(count)
+        end
+        if current == nil or total == nil then
+            if type(fraction) ~= "number" or fraction ~= fraction then return label end
+            current, total = math.clamp(fraction > 1 and fraction / 100 or fraction, 0, 1), 1
+        end
+        if current ~= current or total ~= total or total == math.huge or current == math.huge then return label end
+        current, total = math.max(0, current), math.max(0, total)
+        if total == 1 and label:lower():match("^get tree%s*%(") then
+            state.Completed, state.Total, state.Suffix = current, total, ""
+            return label
+        end
+        if state.Total and state.Completed and state.Completed >= state.Total and current == 0 and total > 0 then
+            state.Started, state.Suffix = os.clock(), nil
+        end
+        if total == 0 or current >= total then
+            state.Completed, state.Total, state.Suffix = current, total, ""
+            return label
+        end
+        -- Re-rendering, status updates and mirrored bars do not move the estimate.
+        -- Refresh it only when the completed count or work total changes.
+        if current ~= state.Completed or total ~= state.Total or not state.Suffix then
+            state.Completed, state.Total = current, total
+            if current == 0 then state.Suffix = " • ETA: calculating..."
+            else
+                local elapsed = math.max(0, os.clock() - state.Started)
+                state.Suffix = " • ETA: " .. eta.Format((elapsed / current) * (total - current))
+            end
+        end
+        return label .. state.Suffix
+    end
+end
 -- Derive small presentation adjustments from the current palette. Presets and
 -- saved theme values stay unchanged, including user-supplied accent colors.
 local PolishBlends = {
@@ -1752,31 +1806,26 @@ function Compkiller:_Blur(element : Frame , WindowRemote) : RBXScriptSignal
 
 	Part.Name = Compkiller:_RandomString();
 
+	local LastWindowActive;
 	local UpdateFunction = function()
 		local IsWindowActive = WindowRemote:GetValue();
 
-		if IsWindowActive then
-
-			Compkiller:_Animation(DepthOfField,TweenInfo.new(0.1),{
-				NearIntensity = 1
-			})
-
-			Compkiller:_Animation(Part,TweenInfo.new(0.1),{
-				Transparency = 0.97,
-				Size = Vector3.new(1, 1, 1) * 0.01;
-			})
-		else
-			Compkiller:_Animation(DepthOfField,TweenInfo.new(0.1),{
-				NearIntensity = 0
-			})
-
-			Compkiller:_Animation(Part,TweenInfo.new(0.1),{
-				Size = Vector3.zero,
-				Transparency = 1.5,
-			})
-
-			return false;
-		end;
+        -- Camera/geometry updates can run every frame. Tween only an actual
+        -- visibility transition, not each ray projection or periodic refresh.
+        if IsWindowActive ~= LastWindowActive then
+            LastWindowActive = IsWindowActive;
+            DepthOfField.Enabled = IsWindowActive;
+            if IsWindowActive then
+                Compkiller:_Animation(DepthOfField,TweenInfo.new(0.1),{NearIntensity = 1});
+                Compkiller:_Animation(Part,TweenInfo.new(0.1),{
+                    Transparency = 0.97, Size = Vector3.new(1, 1, 1) * 0.01;
+                });
+            else
+                Compkiller:_Animation(DepthOfField,TweenInfo.new(0.1),{NearIntensity = 0});
+                Compkiller:_Animation(Part,TweenInfo.new(0.1),{Size = Vector3.zero, Transparency = 1.5});
+            end;
+        end;
+        if not IsWindowActive then return false; end;
 
 		if IsWindowActive then
 			local corner0 = element.AbsolutePosition;
@@ -1833,6 +1882,21 @@ end;
 local DropdownHoverBlockers = {};
 local DropdownHoverTargets = {};
 Compkiller.DropdownOpen = false;
+local DropdownDismissers = {};
+function Compkiller:_RegisterDropdownDismiss(Popup, Window, Close)
+    DropdownDismissers[Popup] = {Window = Window, Close = Close};
+    Popup.Destroying:Connect(function() DropdownDismissers[Popup] = nil end);
+end;
+function Compkiller:_CloseWindowDropdowns(Window)
+    -- Closing invokes each backend's real ToggleUI, clearing its state, shield,
+    -- hover lock and preview. Reopening the menu must not resurrect a popup.
+    local callbacks = {};
+    for _, entry in pairs(DropdownDismissers) do
+        if entry.Window == Window then table.insert(callbacks, entry.Close) end;
+    end;
+    for _, close in ipairs(callbacks) do close(false); end;
+end;
+
 
 local function RefreshDropdownHover()
 	Compkiller.DropdownOpen = next(DropdownHoverBlockers) ~= nil;
@@ -1851,6 +1915,36 @@ function Compkiller:_IsDropdownHoverBlocked(Frame)
 		end;
 	end;
 	return true;
+end;
+
+-- An actual input surface blocks all underlying controls, including controls
+-- using raw mouse/touch callbacks rather than the button/hover helpers.
+function Compkiller:_CreateDropdownInputShield(Window, Popup, IsInside)
+    local shield = Instance.new("TextButton")
+    shield.Name, shield.Text = "DropdownInputShield", ""
+    shield.BackgroundTransparency, shield.AutoButtonColor = 1, false
+    shield.Active, shield.Visible = true, false
+    shield.Size, shield.Position = UDim2.fromScale(1, 1), UDim2.fromScale(0, 0)
+    shield.ZIndex, shield.Parent = Popup.ZIndex - 1, Window
+    local open, pressedOutside = false, false
+    shield.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            -- Some GuiObjects pass button input to this surface underneath.
+            -- Remember where the gesture started, even if its release is outside.
+            pressedOutside = not (IsInside and IsInside())
+        end
+    end)
+    local function update()
+        shield.Visible = open and Popup.Parent ~= nil and Popup.Visible
+    end
+    Popup:GetPropertyChangedSignal("Visible"):Connect(update)
+    Popup.Destroying:Connect(function() open = false;shield:Destroy() end)
+    return shield, function(value)
+        open, pressedOutside = value, false
+        update()
+    end, function()
+        return pressedOutside and not (IsInside and IsInside())
+    end
 end;
 
 function Compkiller:_RegisterDropdownHoverBlocker(Popup)
@@ -2597,10 +2691,10 @@ function Compkiller:_AddLinkValue(Name , Default , GlobalBlock , LinkValues , re
 		TextLabel.Position = UDim2.new(0.5, 0, 0.5, 0)
 		TextLabel.Size = UDim2.new(1, -5, 1, -5)
 		TextLabel.ZIndex = GlobalBlock.ZIndex + 3
-		TextLabel.Font = Enum.Font.Gotham
+		TextLabel.Font = Enum.Font.GothamMedium
 		TextLabel.Text = GetItem(Default or "None");
 		TextLabel.TextColor3 = Compkiller.Colors.SwitchColor
-		TextLabel.TextSize = 12.000
+		TextLabel.TextSize = 14
 		TextLabel.TextTransparency = 000
 
 		table.insert(Compkiller.Elements.SwitchColor,{
@@ -2695,7 +2789,7 @@ function Compkiller:_AddLinkValue(Name , Default , GlobalBlock , LinkValues , re
 		BlockText.Font = Enum.Font.GothamMedium
 		BlockText.Text = " "
 		BlockText.TextColor3 = Compkiller.Colors.SwitchColor
-		BlockText.TextSize = 13.000
+		BlockText.TextSize = 15
 		BlockText.TextTransparency = 0.300
 		BlockText.TextXAlignment = Enum.TextXAlignment.Left
 
@@ -2795,6 +2889,74 @@ function Compkiller:_AddLinkValue(Name , Default , GlobalBlock , LinkValues , re
 	end;
 end;
 
+-- Measure inline controls in logical pixels, independent of layout/viewport scale.
+function Compkiller:_InlineControlWidth(container, layout, scale)
+    local width, count = 0, 0
+    for _, child in ipairs(container:GetChildren()) do
+        if child:IsA("GuiObject") and child.Visible then
+            width += child.AbsoluteSize.X / scale
+            count += 1
+        end
+    end
+    local padding = layout.Padding.Offset + layout.Padding.Scale * container.AbsoluteSize.X / scale
+    return width + math.max(0, count - 1) * padding
+end
+
+-- Reserve the actual inline-control width, then wrap only labels that need it.
+-- Layout runs on changes, never per frame. Text size remains the chosen size.
+function Compkiller:_BindControlLabel(root, label, reservedWidth, options)
+    options = options or {}
+    local baseHeight = options.BaseHeight or root.Size.Y.Offset
+    local labelHeight = options.LabelHeight or 25
+    local padding = options.Padding or 24
+    local alive, queued, lastKey = true, false, nil
+    local connections = {}
+    label.TextWrapped = true
+    local function refresh()
+        queued = false
+        if not alive or not root.Parent then return end
+        local scale, ancestor = 1, root
+        while ancestor do
+            local uiScale = ancestor:FindFirstChildOfClass("UIScale")
+            if uiScale then scale *= uiScale.Scale end
+            ancestor = ancestor.Parent
+        end
+        scale = math.max(scale, 0.001)
+        local width = root.AbsoluteSize.X / scale
+        if width <= padding then return end
+        local reserved = math.max(0, reservedWidth and reservedWidth(scale) or 0)
+        if reserved > 0 then reserved += options.Gap or 10 end
+        local available = math.max(24, width - padding - reserved)
+        local text = label.Text:gsub("<[^>]*>", "")
+        local key = text .. "|" .. tostring(label.Font) .. "|" .. label.TextSize .. "|" .. available
+        if key == lastKey then return end
+        lastKey = key
+        local measured = text ~= "" and TextService:GetTextSize(text, label.TextSize, label.Font, Vector2.new(available, math.huge)).Y or 0
+        local height = math.max(labelHeight, math.ceil(measured))
+        local size = UDim2.new(1, -(padding + reserved - (options.ParentInset or 0)), 0, height)
+        if label.Size ~= size then label.Size = size end
+        local rootSize = UDim2.new(root.Size.X.Scale, root.Size.X.Offset, 0, baseHeight + height - labelHeight)
+        if root.Size ~= rootSize then root.Size = rootSize end
+    end
+    local function request()
+        if not alive or queued then return end
+        queued = true
+        task.defer(refresh)
+    end
+    local function watch(object, property)
+        table.insert(connections, object:GetPropertyChangedSignal(property):Connect(request))
+    end
+    watch(root, "AbsoluteSize")
+    for _, property in ipairs({"Text", "TextSize", "Font"}) do watch(label, property) end
+    table.insert(connections, root.AncestryChanged:Connect(request))
+    for _, trigger in ipairs(options.Triggers or {}) do watch(trigger[1], trigger[2]) end
+    root.Destroying:Connect(function()
+        alive = false
+        for _, connection in ipairs(connections) do connection:Disconnect() end
+    end)
+    request()
+    return request
+end
 function Compkiller:_CreateBlock(Signal)
 	local GlobalBlock = Instance.new("Frame")
 	local BlockText = Instance.new("TextLabel")
@@ -2825,8 +2987,8 @@ function Compkiller:_CreateBlock(Signal)
 	BlockText.Font = Enum.Font.GothamMedium
 	BlockText.Text = "Block"
 	BlockText.TextColor3 = Compkiller.Colors.SwitchColor
-	BlockText.TextSize = 14.000
-	BlockText.TextTransparency = 0.300
+	BlockText.TextSize = 16
+	BlockText.TextTransparency = 0.150
 	BlockText.TextXAlignment = Enum.TextXAlignment.Left
 
 	table.insert(Compkiller.Elements.SwitchColor , {
@@ -2868,7 +3030,7 @@ function Compkiller:_CreateBlock(Signal)
 	});
 
 	local rep = {
-		TextTransparency = 0.300,
+		TextTransparency = 0.150,
 		Root = GlobalBlock,
 		Tween = TweenInfo.new(0.25),
 	};
@@ -2938,6 +3100,9 @@ function Compkiller:_CreateBlock(Signal)
 		return Compkiller:_AddLinkValue(Name , Default , GlobalBlock , LinkValues , rep , Signal);
 	end;
 
+    Compkiller:_BindControlLabel(GlobalBlock, BlockText, function(scale)
+        return Compkiller:_InlineControlWidth(LinkValues, UIListLayout, scale)
+    end, {Triggers = {{UIListLayout, "AbsoluteContentSize"}}})
 	return rep;
 end;
 
@@ -3179,10 +3344,10 @@ function Compkiller:_AddColorPickerPanel(Button: ImageButton , Callback: (Color:
 	TextLabel.Position = UDim2.new(0.5, 0, 0.5, 0)
 	TextLabel.Size = UDim2.new(1, -10, 1, -5)
 	TextLabel.ZIndex = BaseZ_Index + 206
-	TextLabel.Font = Enum.Font.Gotham
+	TextLabel.Font = Enum.Font.GothamMedium
 	TextLabel.Text = "#FFFFFFF"
 	TextLabel.TextColor3 = Compkiller.Colors.SwitchColor
-	TextLabel.TextSize = 13.000
+	TextLabel.TextSize = 15
 	TextLabel.TextXAlignment = Enum.TextXAlignment.Left
 	TextLabel.ClearTextOnFocus = false
 
@@ -3941,9 +4106,259 @@ function Compkiller:_LoadOption(Value , TabSignal)
 	return Args;
 end;
 
-function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
+-- Optional model provider; one lazy viewport and orbit connection per dropdown.
+function Compkiller:_CreateDropdownPreview(Window, Popup, Resolve, IsOpen, Options)
+    if type(Resolve) ~= "function" then return nil end
+    Options = Options or {}
+    local ui = self
+    local preview = {Generation = 0, Cache = {}, Controls = {}, Zoom = 1, Pitch = 0.18}
+
+    function preview:Hide()
+        self.Generation = self.Generation + 1
+        self.Row, self.Dragging = nil, nil
+        if self.Scene then self.Scene.Parent = nil;self.Scene = nil end
+        if self.Thread and self.Thread ~= coroutine.running() then pcall(task.cancel, self.Thread) end
+        self.Thread = nil
+        if self.PendingScene then self.PendingScene:Destroy();self.PendingScene = nil end
+        if self.Render then self.Render:Disconnect();self.Render = nil end
+        if self.Panel then self.Panel.Visible = false end
+        if self.World then self.World:ClearAllChildren() end
+    end
+
+    function preview:Valid(generation)
+        if self.Destroyed or generation ~= self.Generation or not IsOpen()
+            or not self.Row or not self.Row.Parent or not Popup.Parent or not Popup.Visible then return false end
+        local object = self.Row
+        while object and object ~= Window do
+            if object:IsA("GuiObject") and not object.Visible then return false end
+            object = object.Parent
+        end
+        return object == Window and (not Window:IsA("ScreenGui") or Window.Enabled)
+    end
+
+    function preview:Ensure()
+        if self.Panel then return end
+        local panel = Instance.new("TextButton")
+        panel.Text, panel.AutoButtonColor = "", false
+        panel.Name, panel.Size, panel.BorderSizePixel = "DropdownModelPreview", UDim2.fromOffset(220, 238), 0
+        panel.Active = true
+        ui:_AddDragBlacklist(panel)
+        panel.ZIndex, panel.Parent = Popup.ZIndex + 20, Window
+        local corner = Instance.new("UICorner", panel);corner.CornerRadius = UDim.new(0, 8)
+        local stroke = Instance.new("UIStroke", panel);stroke.Transparency = 0.4
+        local title = Instance.new("TextLabel", panel)
+        title.BackgroundTransparency, title.TextXAlignment = 1, Enum.TextXAlignment.Left
+        title.Position, title.Size, title.ZIndex = UDim2.fromOffset(10, 7), UDim2.new(1, -20, 0, 22), panel.ZIndex + 1
+        title.Font, title.TextSize, title.TextTruncate = Enum.Font.GothamMedium, 14, Enum.TextTruncate.AtEnd
+        local caption = Instance.new("TextLabel", panel)
+        caption.BackgroundTransparency, caption.TextXAlignment = 1, Enum.TextXAlignment.Center
+        caption.Position, caption.Size, caption.ZIndex = UDim2.new(0, 8, 1, -25), UDim2.new(1, -16, 0, 18), panel.ZIndex + 1
+        caption.Font, caption.TextSize, caption.TextTruncate = Enum.Font.Gotham, 12, Enum.TextTruncate.AtEnd
+        local viewport = Instance.new("ViewportFrame", panel)
+        viewport.Name, viewport.BackgroundTransparency = "Model", 1
+        viewport.Position, viewport.Size, viewport.ZIndex = UDim2.fromOffset(28, 33), UDim2.new(1, -56, 1, -63), panel.ZIndex + 1
+        viewport.Active = true
+        viewport.Ambient, viewport.LightColor = Color3.fromRGB(180, 180, 180), Color3.new(1, 1, 1)
+        viewport.LightDirection = Vector3.new(-1, -1, -1)
+        local camera = Instance.new("Camera", viewport);camera.FieldOfView = 35
+        viewport.CurrentCamera = camera
+        local world = Instance.new("WorldModel", viewport)
+        ui:_BindPolishColor(panel, "BackgroundColor3", "Popup")
+        ui:_BindPolishColor(stroke, "Color", "StrokeColor")
+        ui:_BindPolishColor(title, "TextColor3", "SwitchColor")
+        ui:_BindPolishColor(caption, "TextColor3", "MutedText")
+        self.Panel, self.Title, self.Caption = panel, title, caption
+        self.Viewport, self.Camera, self.World = viewport, camera, world
+        local function arrow(text, right)
+            local button = Instance.new("TextButton", panel)
+            button.Name, button.Text = right and "NextTree" or "PreviousTree", text
+            button.BackgroundTransparency, button.AutoButtonColor = 1, false
+            button.Active = true
+            button.Font, button.TextSize, button.ZIndex = Enum.Font.GothamMedium, 28, panel.ZIndex + 2
+            button.Size, button.Position = UDim2.fromOffset(26, 48), UDim2.new(right and 1 or 0, right and -26 or 0, 0.5, -24)
+            ui:_BindPolishColor(button, "TextColor3", "SwitchColor")
+            button.MouseButton1Click:Connect(function() self:Browse(right and 1 or -1) end)
+            return button
+        end
+        self.Previous, self.Next = arrow("‹", false), arrow("›", true)
+        self.Previous.Visible, self.Next.Visible = false, false
+        self.Caption.Text = "Drag to rotate • Scroll to zoom"
+        viewport.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                self.Dragging, self.Pointer = input, input.Position
+            end
+        end)
+        viewport.InputChanged:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseWheel and self.Panel.Visible then
+                self.Zoom = math.clamp(self.Zoom * (0.85 ^ input.Position.Z), 0.35, 3)
+            end
+        end)
+        table.insert(self.Controls, UserInputService.InputChanged:Connect(function(input)
+            if not self.Dragging or not self.Panel.Visible then return end
+            if input.UserInputType == Enum.UserInputType.MouseMovement or input == self.Dragging then
+                local delta = input.Position - self.Pointer
+                self.Pointer = input.Position
+                self.Angle = (self.Angle or 0.5) - delta.X * 0.008
+                self.Pitch = math.clamp(self.Pitch + delta.Y * 0.008, -1.3, 1.3)
+            end
+        end))
+        table.insert(self.Controls, UserInputService.InputEnded:Connect(function(input)
+            if input == self.Dragging or input.UserInputType == Enum.UserInputType.MouseButton1 then self.Dragging = nil end
+        end))
+    end
+
+    function preview:Place()
+        local origin, screen = Window.AbsolutePosition, Window.AbsoluteSize
+        local width, height = self.Panel.AbsoluteSize.X, self.Panel.AbsoluteSize.Y
+        local x = Popup.AbsolutePosition.X + Popup.AbsoluteSize.X + 10
+        if x + width > origin.X + screen.X - 8 then x = Popup.AbsolutePosition.X - width - 10 end
+        x = math.clamp(x, origin.X + 8, math.max(origin.X + 8, origin.X + screen.X - width - 8)) - origin.X
+        local y = math.clamp(self.Row.AbsolutePosition.Y, origin.Y + 8,
+            math.max(origin.Y + 8, origin.Y + screen.Y - height - 8)) - origin.Y
+        if self.X ~= x or self.Y ~= y then
+            self.X, self.Y = x, y
+            self.Panel.Position = UDim2.fromOffset(x, y)
+        end
+    end
+
+    function preview:Load(source, active)
+        if typeof(source) ~= "Instance" or not source.Parent then return false end
+        local archivable = source.Archivable
+        local ok, clone = pcall(function() source.Archivable = true;return source:Clone() end)
+        pcall(function() source.Archivable = archivable end)
+        if not ok or not clone then return false end
+        local scene = Instance.new("Model")
+        self.PendingScene = scene
+        clone.Parent = scene
+        local worked, failure = pcall(function()
+            local started, count, parts = os.clock(), 0, 0
+            for _, object in ipairs(scene:GetDescendants()) do
+                if not active() then return false end
+                if object:IsA("LuaSourceContainer") or object:IsA("BodyMover") or object:IsA("JointInstance")
+                    or object:IsA("Constraint") or object:IsA("Sound") or object:IsA("ClickDetector")
+                    or object:IsA("ProximityPrompt") or object:IsA("SelectionBox") or object:IsA("Highlight")
+                    or object:IsA("BillboardGui") or object:IsA("SurfaceGui") or object:IsA("ParticleEmitter")
+                    or object:IsA("Trail") or object:IsA("Beam") then object:Destroy()
+                elseif object:IsA("BasePart") then
+                    parts = parts + 1
+                    object.Anchored, object.CanCollide, object.CanTouch, object.CanQuery = true, false, false, false
+                end
+                count = count + 1
+                if count >= 512 or os.clock() - started >= 0.0015 then
+                    task.wait();started, count = os.clock(), 0
+                end
+            end
+            if parts == 0 or not active() then return false end
+            local bounds, size = scene:GetBoundingBox()
+            scene:PivotTo(CFrame.new(-bounds.Position) * scene:GetPivot())
+            local aspect = math.max(self.Viewport.AbsoluteSize.X, 1) / math.max(self.Viewport.AbsoluteSize.Y, 1)
+            local halfFov = math.rad(self.Camera.FieldOfView * 0.5)
+            local fit = math.min(halfFov, math.atan(math.tan(halfFov) * aspect))
+            self.Distance = math.max(0.5, size.Magnitude * 0.5) / math.sin(fit) * 1.15
+            scene.Parent = self.World
+            return true
+        end)
+        if self.PendingScene == scene then self.PendingScene = nil end
+        if not worked or not failure then scene:Destroy();return false end
+        return true, scene
+    end
+
+    function preview:Buttons()
+        if self.Previous then self.Previous.Visible = (self.Rank or 1) > 1 end
+        if self.Next then self.Next.Visible = (self.Rank or 1) < (self.Total or 0) end
+    end
+
+    function preview:Browse(delta)
+        local rank = math.clamp((self.Rank or 1) + delta, 1, math.max(1, self.Total or 0))
+        if rank ~= self.Rank then self:Show(Popup, self.LastValue, rank) end
+    end
+
+    function preview:Open()
+        if Options.Default then self:Show(Popup, self.LastValue or Options.Default, self.Rank) end
+    end
+
+    function preview:Show(row, value, rank)
+        if self.Row and self.LastValue == value and self.Rank == (rank or 1) and self.Panel and self.Panel.Visible then return end
+        self:Hide()
+        self.Row = Options.Persistent and Popup or row
+        self.LastValue, self.Rank = value, rank or 1
+        local generation = self.Generation
+        if not self:Valid(generation) then return end
+        self:Ensure()
+        self.Title.Text, self.Caption.Text, self.Panel.Visible = tostring(value), "Loading preview…", true
+        self.Distance, self.Angle = nil, 0.5
+        self:Buttons()
+        self:Place()
+        self.Render = RunService.RenderStepped:Connect(function(dt)
+            if not self:Valid(generation) then self:Hide();return end
+            self:Place()
+            if self.Distance then
+                if not self.Dragging then self.Angle = self.Angle + math.min(dt, 0.1) * 0.25 end
+                local distance = self.Distance * self.Zoom
+                self.Camera.CFrame = CFrame.lookAt(Vector3.new(math.sin(self.Angle) * math.cos(self.Pitch) * distance,
+                    math.sin(self.Pitch) * distance, math.cos(self.Angle) * math.cos(self.Pitch) * distance), Vector3.zero)
+            end
+        end)
+        local key = tostring(value) .. "#" .. self.Rank
+        local cached = self.Cache[key]
+        if cached and os.clock() - cached.Time <= 10 and cached.Source.Parent == cached.Parent and cached.Source.Parent and not cached.Source:FindFirstChild("RootCut") then
+            cached.Used = os.clock()
+            self.Scene, self.Distance, self.Total = cached.Scene, cached.Distance, cached.Total
+            self.Scene.Parent = self.World
+            self.Caption.Text = cached.Caption
+            self:Buttons()
+            return
+        end
+        if cached then cached.Scene:Destroy();self.Cache[key] = nil end
+        self.Thread = task.defer(function()
+            local function active() return self:Valid(generation) end
+            local ok, source, caption, total, actualRank = pcall(Resolve, value, active, self.Rank)
+            if not active() then return end
+            local loaded, scene
+            if ok then loaded, scene = self:Load(source, active) end
+            if not active() then return end
+            self.Total, self.Rank = total or 0, actualRank or self.Rank
+            self.Caption.Text = loaded and (caption or "3D preview") or (ok and not source and caption) or "Preview unavailable"
+            if loaded then
+                self.Scene = scene
+                key = tostring(value) .. "#" .. self.Rank
+                if self.Scene then
+                    self.Cache[key] = {Scene = self.Scene, Source = source, Parent = source.Parent, Distance = self.Distance,
+                        Total = self.Total, Caption = self.Caption.Text, Time = os.clock(), Used = os.clock()}
+                    local count, oldestKey, oldest = 0, nil, math.huge
+                    for otherKey, entry in pairs(self.Cache) do
+                        count = count + 1
+                        if otherKey ~= key and entry.Used < oldest then oldestKey, oldest = otherKey, entry.Used end
+                    end
+                    if count > 6 and oldestKey then self.Cache[oldestKey].Scene:Destroy();self.Cache[oldestKey] = nil end
+                end
+            end
+            self:Buttons()
+            self.Thread = nil
+        end)
+    end
+
+    function preview:Bind(row, value, connections)
+        table.insert(connections, row.MouseEnter:Connect(function() self:Show(row, value) end))
+        local function hide() if self.Row == row then self:Hide() end end
+        if not Options.Persistent then table.insert(connections, row.MouseLeave:Connect(hide)) end
+        table.insert(connections, row.Destroying:Connect(hide))
+        table.insert(connections, row:GetPropertyChangedSignal("Visible"):Connect(function() if not row.Visible then hide() end end))
+    end
+    Popup:GetPropertyChangedSignal("Visible"):Connect(function() if not Popup.Visible then preview:Hide() end end)
+    Popup.Destroying:Connect(function()
+        preview.Destroyed = true;preview:Hide()
+        for _, connection in ipairs(preview.Controls) do connection:Disconnect() end
+        for _, entry in pairs(preview.Cache) do entry.Scene:Destroy() end
+        table.clear(preview.Cache)
+        if preview.Panel then preview.Panel:Destroy() end
+    end)
+    return preview
+end
+function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any, Preview: any, PreviewOptions: any, ItemIcon: any)
+	local HoverPreview;
 	local Window = Compkiller:_GetWindowFromElement(BaseParent);
-	local BaseZ_Index = BaseParent.ZIndex + (math.random(1,15) * 100);
+	local BaseZ_Index = 100000 + BaseParent.ZIndex + (math.random(1,15) * 100);
 
 	local DropdownWindow = Instance.new("TextButton")
 	local UIStroke = Instance.new("UIStroke")
@@ -3970,7 +4385,7 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 
 	Compkiller:_AddDragBlacklist(DropdownWindow);
 	Compkiller:_AddPropertyEvent(DropdownWindow,function(v)
-		DropdownWindow.Visible = v;
+		DropdownWindow.Visible = v and ToggleDb:GetValue();
 	end)
 
 	UIStroke.Color = Compkiller.Colors.StrokeColor
@@ -3992,8 +4407,8 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 	SearchBox.TextColor3 = Compkiller.Colors.SwitchColor
 	Compkiller:_BindPolishColor(SearchBox, "PlaceholderColor3", "Placeholder");
 	SearchBox.PlaceholderText = "Search..."
-	SearchBox.Font = Enum.Font.Gotham
-	SearchBox.TextSize = 12
+	SearchBox.Font = Enum.Font.GothamMedium
+	SearchBox.TextSize = 15
 	SearchBox.ZIndex = BaseZ_Index + 5
 
 	table.insert(Compkiller.Elements.SwitchColor, {
@@ -4013,8 +4428,8 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 	ClearButton.BackgroundColor3 = Compkiller.Colors.DropColor
 	ClearButton.Text = "Clear All"
 	ClearButton.TextColor3 = Compkiller.Colors.SwitchColor
-	ClearButton.Font = Enum.Font.GothamBold
-	ClearButton.TextSize = 10
+	ClearButton.Font = Enum.Font.GothamMedium
+	ClearButton.TextSize = 12
 	ClearButton.ZIndex = BaseZ_Index + 6
 	ClearButton.Visible = false
 	ClearButton.AutoButtonColor = false
@@ -4068,6 +4483,7 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 	end);
 
 	SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+		if HoverPreview and not (PreviewOptions and PreviewOptions.Persistent) then HoverPreview:Hide() end;
 		local query = string.lower(SearchBox.Text)
 		for _, item in ipairs(ScrollingFrame:GetChildren()) do
 			if item:IsA("Frame") then
@@ -4084,17 +4500,33 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 		end
 	end)
 
+	DropdownWindow.Visible = false;
+	local InputShield, SetDropdownInputOpen, ShouldCloseDropdown = Compkiller:_CreateDropdownInputShield(Window, DropdownWindow, function()
+        return Compkiller:_IsMouseOverFrame(DropdownWindow)
+            or (HoverPreview and HoverPreview.Panel and Compkiller:_IsMouseOverFrame(HoverPreview.Panel))
+    end);
 	local SetDropdownHoverOpen = Compkiller:_RegisterDropdownHoverBlocker(DropdownWindow);
+	if type(Preview) == "function" then
+		HoverPreview = Compkiller:_CreateDropdownPreview(Window, DropdownWindow, Preview, function() return ToggleDb:GetValue() end, PreviewOptions);
+		ScrollingFrame:GetPropertyChangedSignal("CanvasPosition"):Connect(function() if not (PreviewOptions and PreviewOptions.Persistent) then HoverPreview:Hide() end end);
+	end;
 
+	local OrderDropdownRows;
 	local ToggleUI = function(bool)
+		if not bool and HoverPreview then HoverPreview:Hide() end;
 		local IsSame = ToggleDb:GetValue() == bool;
 		if IsSame then return end;
+		DropdownWindow.Visible = bool;
+		SetDropdownInputOpen(bool);
+
+        if bool and OrderDropdownRows then
+            OrderDropdownRows();
+            ScrollingFrame.CanvasPosition = Vector2.zero;
+        end;
 
 		EventOut:Fire(bool);
 		ToggleDb:Fire(bool);
 		SetDropdownHoverOpen(bool);
-
-		local MUL = Window.AbsoluteSize.Y / 2;
 
 		local dropWidth = BaseParent:GetAttribute("DropdownWidth") or (BaseParent.AbsoluteSize.X - 1)
 		local offsetX = BaseParent:GetAttribute("DropdownOffsetX") or 0
@@ -4102,15 +4534,7 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 		local MainPosition = UDim2.fromOffset(BaseParent.AbsolutePosition.X + 1 + offsetX,BaseParent.AbsolutePosition.Y + 80);
 		local DropPosition = UDim2.fromOffset(MainPosition.X.Offset,MainPosition.Y.Offset + 25);
 
-		local forceUpwards = BaseParent:GetAttribute("DropdownUpwards")
-		if MainPosition.Y.Offset > MUL or forceUpwards then -- go up
-			MainPosition = UDim2.fromOffset(BaseParent.AbsolutePosition.X + 1 + offsetX,BaseParent.AbsolutePosition.Y + 55);
-			DropPosition = UDim2.fromOffset(MainPosition.X.Offset,MainPosition.Y.Offset - 25);
-
-			DropdownWindow.AnchorPoint = Vector2.new(0,1);
-		else
-			DropdownWindow.AnchorPoint = Vector2.zero;
-		end;
+		DropdownWindow.AnchorPoint = Vector2.zero;
 
 		if bool then
 			if not IsSame then
@@ -4125,6 +4549,7 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 					Position = MainPosition,
 					Size = UDim2.new(0, dropWidth, 0, math.clamp(UIListLayout.AbsoluteContentSize.Y + 45, 45, 200))
 				})
+				if HoverPreview and ToggleDb:GetValue() then HoverPreview:Open() end;
 			end)
 
 			Compkiller:_Animation(UIStroke,TweenInfo.new(0.2),{
@@ -4144,6 +4569,7 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 	end;
 
 	ToggleUI(false)
+    Compkiller:_RegisterDropdownDismiss(DropdownWindow, Window, ToggleUI);
 
 	local SpamUpdate,_Delay = false , tick();
 	local __signals = {};
@@ -4185,8 +4611,8 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 		BlockText.Font = Enum.Font.GothamMedium
 		BlockText.Text = ""
 		BlockText.TextColor3 = Compkiller.Colors.SwitchColor
-		BlockText.TextSize = 13.000
-		BlockText.TextTransparency = 0.250
+		BlockText.TextSize = 15
+		BlockText.TextTransparency = 0.120
 		BlockText.TextXAlignment = Enum.TextXAlignment.Left
 
 		table.insert(Compkiller.Elements.SwitchColor , {
@@ -4219,6 +4645,7 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 	end;
 
 	local ClearDropdown = function()
+		if HoverPreview then HoverPreview:Hide() end;
 		for i,v in next , ScrollingFrame:GetChildren() do
 			if v:IsA('Frame') then
 				v:Destroy();
@@ -4238,6 +4665,21 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 	local MatchDefault = function(v,DataFrame)
 		return (typeof(DataFrame) == 'table' and (DataFrame[v] or table.find(DataFrame,v))) or DataFrame == v;
 	end;
+
+    -- Stable selected-first grouping, applied when opening rather than mid-click.
+    OrderDropdownRows = function()
+        local selectedOrder, otherOrder = 0, 0;
+        local selection = currentDataFrame or Default;
+        for _, row in ipairs(currentButtons) do
+            if IsMulti and MatchDefault(row.Value, selection) then
+                selectedOrder = selectedOrder + 1;
+                row.DropdownItem.LayoutOrder = selectedOrder;
+            else
+                otherOrder = otherOrder + 1;
+                row.DropdownItem.LayoutOrder = IsMulti and (#currentButtons + otherOrder) or otherOrder;
+            end;
+        end;
+    end;
 
 	local UpdateDropdown = function()
 		currentButtons = {};
@@ -4261,13 +4703,24 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 
 			bth.DropdownItem.Parent = ScrollingFrame;
 
+            if type(ItemIcon) == "function" then
+                local ok, image = pcall(ItemIcon, v)
+                local icon = Instance.new("ImageLabel", bth.DropdownItem)
+                icon.Name, icon.BackgroundTransparency = "ItemIcon", 1
+                icon.Size, icon.Position = UDim2.fromOffset(22, 22), UDim2.new(0, 4, 0.5, -11)
+                icon.Image, icon.ScaleType, icon.ZIndex = ok and type(image) == "string" and image or "", Enum.ScaleType.Fit, BaseZ_Index + 7
+                bth.BlockText.Position, bth.BlockText.Size = UDim2.new(0, 32, 0.5, 0), UDim2.new(1, -37, 0, 25)
+                table.insert(__signals, ToggleDb:Connect(function(open) icon.ImageTransparency = open and 0 or 1 end))
+            end
 			bth.Value = v;
+			if HoverPreview then HoverPreview:Bind(bth.DropdownItem, v, __signals) end;
 			table.insert(currentButtons, bth);
+            bth.DropdownItem.LayoutOrder = #currentButtons;
 
 			table.insert(__signals , ToggleDb:Connect(function(bool)
 				if bool then
 					Compkiller:_Animation(bth.BlockText,TweenInfo.new(0.2),{
-						TextTransparency = ((IsDefault(v) or MatchDefault(v,currentDataFrame or DataFrame)) and 0) or 0.25
+						TextTransparency = ((IsDefault(v) or MatchDefault(v,currentDataFrame or DataFrame)) and 0) or 0.12
 					});
 
 					Compkiller:_Animation(bth.BlockLine,TweenInfo.new(0.2),{
@@ -4286,7 +4739,7 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 
 			if ToggleDb:GetValue() then
 				Compkiller:_Animation(bth.BlockText,TweenInfo.new(0.2),{
-					TextTransparency = ((IsDefault(v) or MatchDefault(v,currentDataFrame or DataFrame)) and 0) or 0.25
+					TextTransparency = ((IsDefault(v) or MatchDefault(v,currentDataFrame or DataFrame)) and 0) or 0.12
 				});
 			end;
 
@@ -4303,14 +4756,14 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 				end;
 
 				Compkiller:_Animation(bth.BlockText,TweenInfo.new(0.2),{
-					TextTransparency = ((MatchDefault(v,currentDataFrame)) and 0) or 0.25
+					TextTransparency = ((MatchDefault(v,currentDataFrame)) and 0) or 0.12
 				});
 
 				btn = Compkiller:_Input(bth.DropdownItem,function()
 					currentDataFrame[v] = not currentDataFrame[v];
 
 					Compkiller:_Animation(bth.BlockText,TweenInfo.new(0.2),{
-						TextTransparency = ((MatchDefault(v,currentDataFrame)) and 0) or 0.25
+						TextTransparency = ((MatchDefault(v,currentDataFrame)) and 0) or 0.12
 					});
 
 					Callback(currentDataFrame)
@@ -4319,7 +4772,7 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 				btn = Compkiller:_Input(bth.DropdownItem,function()
 					if DataFrame then
 						Compkiller:_Animation(DataFrame.BlockText,TweenInfo.new(0.2),{
-							TextTransparency = ((IsDefault(v) or MatchDefault(v,DataFrame)) and 0) or 0.25
+							TextTransparency = ((IsDefault(v) or MatchDefault(v,DataFrame)) and 0) or 0.12
 						});
 					end;
 
@@ -4328,7 +4781,7 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 					DataFrame = bth;
 
 					Compkiller:_Animation(bth.BlockText,TweenInfo.new(0.2),{
-						TextTransparency = ((IsDefault(v) or MatchDefault(v,DataFrame)) and 0) or 0.25
+						TextTransparency = ((IsDefault(v) or MatchDefault(v,DataFrame)) and 0) or 0.12
 					});
 
 					Callback(DataFrame.Value)
@@ -4376,6 +4829,8 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 				applyHighlight(false)
 			end, true)
 		end;
+        OrderDropdownRows();
+        if HoverPreview and ToggleDb:GetValue() then HoverPreview:Open() end;
 	end;
 
 	Compkiller:_BindClickRipple(ClearButton);
@@ -4390,7 +4845,7 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 		for _, bth in ipairs(currentButtons) do
 			if bth and bth.BlockText then
 				Compkiller:_Animation(bth.BlockText, TweenInfo.new(0.2), {
-					TextTransparency = 0.25
+					TextTransparency = 0.12
 				})
 			end
 		end
@@ -4407,11 +4862,10 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 		ToggleUI(not ToggleDb:GetValue());
 	end);
 
-	Compkiller:_RegisterClickListener(function(Input)
-		if not Compkiller:_IsMouseOverFrame(DropdownWindow) and not Compkiller:_IsMouseOverFrame(BaseParent) then
-			ToggleUI(false);
-		end;
-	end);
+    -- Close on release so the entire outside click belongs to the shield.
+    InputShield.MouseButton1Click:Connect(function()
+        if ShouldCloseDropdown() then ToggleUI(false); end;
+    end);
 
 	local Args = {};
 
@@ -4427,7 +4881,7 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 			Default = {}
 			for _, bth in ipairs(currentButtons) do
 				if bth and bth.BlockText then
-					bth.BlockText.TextTransparency = 0.25
+					bth.BlockText.TextTransparency = 0.12
 				end
 			end
 			Callback(currentDataFrame)
@@ -4463,9 +4917,10 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any)
 end;
 
 -- Image Dropdown backend ─────────────────────────────────────────────────────
-function Compkiller:_LoadImageDropdown(BaseParent: TextButton, Callback: () -> any)
+function Compkiller:_LoadImageDropdown(BaseParent: TextButton, Callback: () -> any, Preview: any)
+	local HoverPreview;
 	local Window      = Compkiller:_GetWindowFromElement(BaseParent);
-	local BaseZ_Index = BaseParent.ZIndex + (math.random(1,15) * 100);
+	local BaseZ_Index = 100000 + BaseParent.ZIndex + (math.random(1,15) * 100);
 
 	local DropdownWindow = Instance.new("TextButton");
 	local UIStroke       = Instance.new("UIStroke");
@@ -4489,7 +4944,7 @@ function Compkiller:_LoadImageDropdown(BaseParent: TextButton, Callback: () -> a
 
 	Compkiller:_BindPolishColor(DropdownWindow, "BackgroundColor3", "Popup");
 	Compkiller:_AddDragBlacklist(DropdownWindow);
-	Compkiller:_AddPropertyEvent(DropdownWindow, function(v) DropdownWindow.Visible = v; end);
+	Compkiller:_AddPropertyEvent(DropdownWindow, function(v) DropdownWindow.Visible = v and ToggleDb:GetValue(); end);
 
 	UIStroke.Color  = Compkiller.Colors.StrokeColor;
 	UIStroke.Parent = DropdownWindow;
@@ -4522,27 +4977,31 @@ function Compkiller:_LoadImageDropdown(BaseParent: TextButton, Callback: () -> a
 		);
 	end);
 
+	DropdownWindow.Visible = false;
+	local InputShield, SetDropdownInputOpen, ShouldCloseDropdown = Compkiller:_CreateDropdownInputShield(Window, DropdownWindow, function()
+        return Compkiller:_IsMouseOverFrame(DropdownWindow)
+            or (HoverPreview and HoverPreview.Panel and Compkiller:_IsMouseOverFrame(HoverPreview.Panel))
+    end);
 	local SetDropdownHoverOpen = Compkiller:_RegisterDropdownHoverBlocker(DropdownWindow);
+	if type(Preview) == "function" then
+		HoverPreview = Compkiller:_CreateDropdownPreview(Window, DropdownWindow, Preview, function() return ToggleDb:GetValue() end);
+		ScrollingFrame:GetPropertyChangedSignal("CanvasPosition"):Connect(function() HoverPreview:Hide() end);
+	end;
 
 	local function ToggleUI(bool)
+		if not bool and HoverPreview then HoverPreview:Hide() end;
 		local IsSame = ToggleDb:GetValue() == bool;
 		if IsSame then return end;
+		DropdownWindow.Visible = bool;
+		SetDropdownInputOpen(bool);
 		EventOut:Fire(bool);
 		ToggleDb:Fire(bool);
 		SetDropdownHoverOpen(bool);
 
-		local MUL          = Window.AbsoluteSize.Y / 2;
 		local MainPosition = UDim2.fromOffset(BaseParent.AbsolutePosition.X + 1, BaseParent.AbsolutePosition.Y + 80);
 		local DropPosition = UDim2.fromOffset(MainPosition.X.Offset, MainPosition.Y.Offset + 25);
 
-		local forceUpwards = BaseParent:GetAttribute("DropdownUpwards")
-		if MainPosition.Y.Offset > MUL or forceUpwards then
-			MainPosition = UDim2.fromOffset(BaseParent.AbsolutePosition.X + 1, BaseParent.AbsolutePosition.Y + 55);
-			DropPosition = UDim2.fromOffset(MainPosition.X.Offset, MainPosition.Y.Offset - 25);
-			DropdownWindow.AnchorPoint = Vector2.new(0,1);
-		else
-			DropdownWindow.AnchorPoint = Vector2.zero;
-		end;
+		DropdownWindow.AnchorPoint = Vector2.zero;
 
 		local contentH = math.clamp(UIListLayout.AbsoluteContentSize.Y + 10, 10, 240);
 
@@ -4565,6 +5024,7 @@ function Compkiller:_LoadImageDropdown(BaseParent: TextButton, Callback: () -> a
 	end;
 
 	ToggleUI(false);
+    Compkiller:_RegisterDropdownDismiss(DropdownWindow, Window, ToggleUI);
 
 	local Default  = nil;
 	local Values   = nil;
@@ -4616,7 +5076,7 @@ function Compkiller:_LoadImageDropdown(BaseParent: TextButton, Callback: () -> a
 		Label.Font                 = Enum.Font.GothamMedium;
 		Label.Text                 = tostring(item.name or "");
 		Label.TextColor3           = Compkiller.Colors.SwitchColor;
-		Label.TextSize             = 12;
+		Label.TextSize             = 14;
 		Label.TextTransparency     = 0.25;
 		Label.TextXAlignment       = Enum.TextXAlignment.Left;
 		Label.TextTruncate         = Enum.TextTruncate.AtEnd;
@@ -4637,6 +5097,7 @@ function Compkiller:_LoadImageDropdown(BaseParent: TextButton, Callback: () -> a
 	end;
 
 	local function ClearDropdown()
+		if HoverPreview then HoverPreview:Hide() end;
 		for _,v in next, ScrollingFrame:GetChildren() do
 			if v:IsA('Frame') then v:Destroy(); end;
 		end;
@@ -4658,6 +5119,7 @@ function Compkiller:_LoadImageDropdown(BaseParent: TextButton, Callback: () -> a
 		for _, item in next, Values do
 			local row = DrawImageRow(item);
 			row.Row.Parent = ScrollingFrame;
+			if HoverPreview then HoverPreview:Bind(row.Row, item, __signals) end;
 
 			-- highlight selected
 			table.insert(__signals, ToggleDb:Connect(function(bool)
@@ -4733,11 +5195,10 @@ function Compkiller:_LoadImageDropdown(BaseParent: TextButton, Callback: () -> a
 		ToggleUI(not ToggleDb:GetValue());
 	end);
 
-	Compkiller:_RegisterClickListener(function()
-		if not Compkiller:_IsMouseOverFrame(DropdownWindow) and not Compkiller:_IsMouseOverFrame(BaseParent) then
-			ToggleUI(false);
-		end;
-	end);
+    -- Close on release so the entire outside click belongs to the shield.
+    InputShield.MouseButton1Click:Connect(function()
+        if ShouldCloseDropdown() then ToggleUI(false); end;
+    end);
 
 	local Args = {};
 
@@ -4797,7 +5258,7 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 
 			Toggle.ChangeValue(Config.Default);
 
-			Block:SetTransparency((Config.Default and 0.1) or 0.3);
+			Block:SetTransparency((Config.Default and 0.05) or 0.15);
 
 			Config.Callback(Config.Default);
 		end);
@@ -4816,7 +5277,7 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 
 			Toggle.ChangeValue(Config.Default);
 
-			Block:SetTransparency((Config.Default and 0.1) or 0.3);
+			Block:SetTransparency((Config.Default and 0.05) or 0.15);
 
 			Config.Callback(Config.Default);
 		end;
@@ -5092,7 +5553,7 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 		TextLabel.Font = Enum.Font.GothamMedium
 		TextLabel.Text = Config.Name;
 		TextLabel.TextColor3 = Compkiller.Colors.SwitchColor
-		TextLabel.TextSize = 12.000
+		TextLabel.TextSize = 15
 		TextLabel.TextStrokeTransparency = 0.900
 
 		table.insert(Compkiller.Elements.SwitchColor , {
@@ -5171,8 +5632,8 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 			Compkiller:_BindPolishColor(inputTb, "PlaceholderColor3", "Placeholder");
 			Compkiller:_BindPolishColor(inputTb, "TextColor3", "SwitchColor");
 			inputTb.Text = ""
-			inputTb.Font = Enum.Font.Gotham
-			inputTb.TextSize = 11
+			inputTb.Font = Enum.Font.GothamMedium
+			inputTb.TextSize = 13
 			inputTb.ZIndex = Zindex + 11
 
 			local btn = Compkiller:_Input(Frame,function()
@@ -5290,6 +5751,7 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 			end
 		end;
 
+        Compkiller:_BindControlLabel(Button, TextLabel, nil, {Padding = 32, ParentInset = 15})
 		return Args;
 	end;
 
@@ -5316,7 +5778,7 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 		TextLabel.Font = Enum.Font.GothamMedium
 		TextLabel.Text = Config.Name
 		TextLabel.TextColor3 = Compkiller.Colors.SwitchColor
-		TextLabel.TextSize = 12.000
+		TextLabel.TextSize = 14
 		TextLabel.TextStrokeTransparency = 0.900
 
 		table.insert(Compkiller.Elements.SwitchColor , {
@@ -5360,7 +5822,7 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 		    Compkiller:_BindPolishColor(b, "BackgroundColor3", "DropColor");
 		    Compkiller:_BindPolishColor(b, "TextColor3", "SwitchColor");
 		    b.Font = Enum.Font.GothamMedium
-		    b.TextSize = 12
+		    b.TextSize = 14
 		    b.ZIndex = Zindex + 9
 		    b.AutoButtonColor = false
 
@@ -5412,7 +5874,7 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
             t.BackgroundTransparency = 1
             t.TextColor3 = Compkiller.Colors.Highlight or Color3.fromRGB(0, 255, 255)
             t.Font = Enum.Font.GothamMedium
-            t.TextSize = 11
+            t.TextSize = 13
             t.TextXAlignment = Enum.TextXAlignment.Left
             t.ZIndex = Zindex + 9
             
@@ -5427,8 +5889,8 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
             box.Text = tostring(default)
             Compkiller:_BindPolishColor(box, "BackgroundColor3", "DropColor");
             Compkiller:_BindPolishColor(box, "TextColor3", "SwitchColor");
-            box.Font = Enum.Font.Gotham
-            box.TextSize = 11
+            box.Font = Enum.Font.GothamMedium
+            box.TextSize = 13
             box.ZIndex = Zindex + 9
             Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)
             local BoxStroke = Instance.new("UIStroke", box);
@@ -5499,7 +5961,7 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 		BlockText.Font = Enum.Font.GothamMedium
 		BlockText.Text = Config.Name
 		BlockText.TextColor3 = Compkiller.Colors.SwitchColor
-		BlockText.TextSize = 14.000
+		BlockText.TextSize = 16
 		BlockText.TextTransparency = 0.100
 		BlockText.TextXAlignment = Enum.TextXAlignment.Left
 
@@ -5646,7 +6108,7 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 		ValueText.Font = Enum.Font.GothamMedium
 		ValueText.Text = tostring(Config.Default)..tostring(Config.Type)
 		ValueText.TextColor3 = Compkiller.Colors.SwitchColor
-		ValueText.TextSize = 12.000
+		ValueText.TextSize = 14
 		ValueText.TextTransparency = 0
 		ValueText.TextXAlignment = Enum.TextXAlignment.Center
 
@@ -5869,6 +6331,8 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 			Compkiller.Flags[Config.Flag] = Args;
 		end;
 
+        Compkiller:_BindControlLabel(Slider, BlockText, function(scale) return ValueText.AbsoluteSize.X / scale end,
+            {Triggers = {{ValueText, "AbsoluteSize"}}})
 		return Args;
 	end;
 
@@ -5907,10 +6371,10 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
     BlockText.Position = UDim2.new(0, 12, 0, 12)
     BlockText.Size = UDim2.new(1, -50, 0, 25) -- Shrink width to make room for VPF
     BlockText.ZIndex = Zindex + 3
-    BlockText.Font = Enum.Font.GothamBold
+    BlockText.Font = Enum.Font.GothamMedium
     BlockText.Text = Config.Title
     BlockText.TextColor3 = Compkiller.Colors.SwitchColor
-    BlockText.TextSize = 15.000
+    BlockText.TextSize = 17
     BlockText.TextXAlignment = Enum.TextXAlignment.Left
     BlockText.RichText = true
 
@@ -5983,10 +6447,10 @@ end
 		DescriptionText.Position = UDim2.new(0, 12, 0, 22)
 		DescriptionText.Size = UDim2.new(1, -20, 0, 20)
 		DescriptionText.ZIndex = Zindex + 5
-		DescriptionText.Font = Enum.Font.Gotham
+		DescriptionText.Font = Enum.Font.GothamMedium
 		DescriptionText.Text = Config.Content
 		Compkiller:_BindPolishColor(DescriptionText, "TextColor3", "MutedText");
-		DescriptionText.TextSize = 14.000
+		DescriptionText.TextSize = 16
 		DescriptionText.TextTransparency = 0.000 -- Full opacity to pop out
 		DescriptionText.TextWrapped = true -- Allows text to wrap
 		DescriptionText.TextXAlignment = Enum.TextXAlignment.Left
@@ -6233,7 +6697,7 @@ return Args;
     BlockText.Font = Enum.Font.GothamMedium
     BlockText.Text = Config.Title
     BlockText.TextColor3 = Compkiller.Colors.SwitchColor
-    BlockText.TextSize = 14.000
+    BlockText.TextSize = 16
     BlockText.TextXAlignment = Enum.TextXAlignment.Left
     BlockText.RichText = true
 
@@ -6305,8 +6769,8 @@ return Args;
     DescriptionText.Font = Enum.Font.GothamMedium
     DescriptionText.Text = Config.Content
     DescriptionText.TextColor3 = Compkiller.Colors.SwitchColor
-    DescriptionText.TextSize = 13.000
-    DescriptionText.TextTransparency = 0.500
+    DescriptionText.TextSize = 15
+    DescriptionText.TextTransparency = 0.250
     DescriptionText.TextXAlignment = Enum.TextXAlignment.Left
     DescriptionText.TextYAlignment = Enum.TextYAlignment.Top
 
@@ -6351,7 +6815,7 @@ return Args;
     Btn2Text.Font = Enum.Font.GothamMedium
     Btn2Text.Text = Config.Button2Text
     Btn2Text.TextColor3 = Compkiller.Colors.SwitchColor
-    Btn2Text.TextSize = 10.000
+    Btn2Text.TextSize = 12
     Btn2Text.ZIndex = Zindex + 7
 
     Btn1.Name = Compkiller:_RandomString()
@@ -6375,7 +6839,7 @@ return Args;
     Btn1Text.Font = Enum.Font.GothamMedium
     Btn1Text.Text = Config.Button1Text
     Btn1Text.TextColor3 = Compkiller.Colors.SwitchColor
-    Btn1Text.TextSize = 10.000
+    Btn1Text.TextSize = 12
     Btn1Text.ZIndex = Zindex + 7
 
     table.insert(Compkiller.Elements.DropColor , { Element = Btn1, Property = "BackgroundColor3" })
@@ -6509,8 +6973,8 @@ return Args;
 
     function ActionArgs:SetVisible(visible)
         if visible then
-            Compkiller:_Animation(BlockText, TweenInfo.new(0.2), { TextTransparency = 0.300 });
-            Compkiller:_Animation(DescriptionText, TweenInfo.new(0.2), { TextTransparency = 0.500 });
+            Compkiller:_Animation(BlockText, TweenInfo.new(0.2), { TextTransparency = 0.100 });
+            Compkiller:_Animation(DescriptionText, TweenInfo.new(0.2), { TextTransparency = 0.250 });
             Compkiller:_Animation(BlockLine, TweenInfo.new(0.2), { BackgroundTransparency = 0.500 });
             if BlockViewport then
                 BlockViewport.BackgroundTransparency = 0
@@ -6538,8 +7002,8 @@ return Args;
 
     ActionArgs.Signal = Signal:Connect(function(bool)
         if bool then
-            Compkiller:_Animation(BlockText, TweenInfo.new(0.2), { TextTransparency = 0.300 });
-            Compkiller:_Animation(DescriptionText, TweenInfo.new(0.2), { TextTransparency = 0.500 });
+            Compkiller:_Animation(BlockText, TweenInfo.new(0.2), { TextTransparency = 0.100 });
+            Compkiller:_Animation(DescriptionText, TweenInfo.new(0.2), { TextTransparency = 0.250 });
             Compkiller:_Animation(BlockLine, TweenInfo.new(0.2), { BackgroundTransparency = 0.500 });
         else
             Compkiller:_Animation(BlockText, TweenInfo.new(0.2), { TextTransparency = 1 });
@@ -6592,7 +7056,7 @@ return Args;
 		BlockText.Font = Enum.Font.GothamMedium
 		BlockText.Text = Config.Name
 		BlockText.TextColor3 = Compkiller.Colors.SwitchColor
-		BlockText.TextSize = 14.000
+		BlockText.TextSize = 16
 		BlockText.TextTransparency = 0.300
 		BlockText.TextXAlignment = Enum.TextXAlignment.Left
 
@@ -6644,7 +7108,7 @@ return Args;
 		Compkiller:_BindPolishColor(TextBox_2, "PlaceholderColor3", "Placeholder");
 		TextBox_2.Text = Config.Default
 		TextBox_2.TextColor3 = Compkiller.Colors.SwitchColor
-		TextBox_2.TextSize = 11.000
+		TextBox_2.TextSize = 13
 
 		table.insert(Compkiller.Elements.SwitchColor,{
 			Element = TextBox_2,
@@ -6775,6 +7239,8 @@ return Args;
 			Compkiller.Flags[Config.Flag] = Args;
 		end;
 
+        Compkiller:_BindControlLabel(TextBox, BlockText, function(scale) return LinkValues.AbsoluteSize.X / scale end,
+            {Triggers = {{LinkValues, "AbsoluteSize"}}})
 		return Args;
 	end;
 
@@ -6856,12 +7322,12 @@ return Args;
 		BlockText.Font = Enum.Font.GothamMedium
 		BlockText.Text = Config.Name
 		BlockText.TextColor3 = Compkiller.Colors.SwitchColor
-		BlockText.TextSize = 14.000
+		BlockText.TextSize = 16
 		BlockText.TextTransparency = 0.100
 		BlockText.TextXAlignment = Enum.TextXAlignment.Left
 
 		if not BlockText.Text:byte() then
-			Dropdown.Size = UDim2.new(1, -1, 0, 25)
+			Dropdown.Size = UDim2.new(1, -1, 0, 31)
 		end;
 
 		table.insert(Compkiller.Elements.SwitchColor , {
@@ -6891,8 +7357,8 @@ return Args;
 			if not Config.ActionButton.Color then Compkiller:_BindPolishColor(actionBtn, "BackgroundColor3", "Toggle"); end;
 			actionBtn.Text = Config.ActionButton.Text or "Action"
 			Compkiller:_BindPolishColor(actionBtn, "TextColor3", "SwitchColor");
-			actionBtn.Font = Enum.Font.GothamBold
-			actionBtn.TextSize = 11
+			actionBtn.Font = Enum.Font.GothamMedium
+			actionBtn.TextSize = 13
 			actionBtn.ZIndex = Zindex + 5
 			
 			local btnCorner = Instance.new("UICorner")
@@ -6937,8 +7403,8 @@ return Args;
 			Compkiller:_BindPolishColor(inputTb, "PlaceholderColor3", "Placeholder");
 			Compkiller:_BindPolishColor(inputTb, "TextColor3", "SwitchColor");
 			inputTb.Text = ""
-			inputTb.Font = Enum.Font.Gotham
-			inputTb.TextSize = 11
+			inputTb.Font = Enum.Font.GothamMedium
+			inputTb.TextSize = 13
 			inputTb.ZIndex = Zindex + 11
 
 			Compkiller:_BindClickRipple(actionBtn);
@@ -6985,8 +7451,8 @@ return Args;
 			if not Config.ActionButton2.Color then Compkiller:_BindPolishColor(actionBtn2, "BackgroundColor3", "DropColor"); end;
 			actionBtn2.Text = Config.ActionButton2.Text or "Action 2"
 			Compkiller:_BindPolishColor(actionBtn2, "TextColor3", "SwitchColor");
-			actionBtn2.Font = Enum.Font.GothamBold
-			actionBtn2.TextSize = 11
+			actionBtn2.Font = Enum.Font.GothamMedium
+			actionBtn2.TextSize = 13
 			actionBtn2.ZIndex = Zindex + 5
 			
 			local btnCorner2 = Instance.new("UICorner")
@@ -7030,7 +7496,7 @@ return Args;
 		ValueItems.BorderSizePixel = 0
 		ValueItems.ClipsDescendants = true
 		ValueItems.Position = UDim2.new(0.5, 0, 1, -7)
-		ValueItems.Size = UDim2.new(1, -25, 0, 18)
+		ValueItems.Size = UDim2.new(1, -25, 0, 22)
 		ValueItems.ZIndex = Zindex + 5
 
 		table.insert(Compkiller.Elements.BGDBColor , {
@@ -7056,12 +7522,12 @@ return Args;
 		ValueText.BorderColor3 = Color3.fromRGB(0, 0, 0)
 		ValueText.BorderSizePixel = 0
 		ValueText.Position = UDim2.new(0.5, 0, 0.5, 0)
-		ValueText.Size = UDim2.new(1, -10, 0, 15)
+		ValueText.Size = UDim2.new(1, -10, 0, 20)
 		ValueText.ZIndex = Zindex + 8
-		ValueText.Font = Enum.Font.Gotham
+		ValueText.Font = Enum.Font.GothamMedium
 		ValueText.Text = DaTabarser(Config.Default)
 		ValueText.TextColor3 = Compkiller.Colors.SwitchColor
-		ValueText.TextSize = 11.000
+		ValueText.TextSize = 15
 		ValueText.TextXAlignment = Enum.TextXAlignment.Left
 
 		table.insert(Compkiller.Elements.SwitchColor , {
@@ -7141,7 +7607,7 @@ return Args;
 			ValueText.Text = DaTabarser(Config.Default);
 
 			Config.Callback(Config.Default);
-		end);
+		end, Config.Preview, Config.PreviewOptions, Config.ItemIcon);
 
 		repi.EventOut:Connect(function(v)
 			if v then
@@ -7285,6 +7751,12 @@ return Args;
 			Compkiller.Flags[Config.Flag] = Args;
 		end;
 
+        local labelTriggers = {{UIListLayout, "AbsoluteContentSize"}}
+        if actionButton2 then table.insert(labelTriggers, {actionButton2, "Visible"}) end
+        Compkiller:_BindControlLabel(Dropdown, BlockText, function(scale)
+            local actionWidth = (Config.ActionButton or (actionButton2 and actionButton2.Visible)) and 65 or 0
+            return math.max(Compkiller:_InlineControlWidth(LinkValues, UIListLayout, scale), actionWidth)
+        end, {Triggers = labelTriggers})
 		return Args;
 	end;
 
@@ -7340,7 +7812,7 @@ return Args;
 		BlockText.Font                 = Enum.Font.GothamMedium;
 		BlockText.Text                 = Config.Name;
 		BlockText.TextColor3           = Compkiller.Colors.SwitchColor;
-		BlockText.TextSize             = 14;
+		BlockText.TextSize             = 16;
 		BlockText.TextTransparency     = 0.1;
 		BlockText.TextXAlignment       = Enum.TextXAlignment.Left;
 		table.insert(Compkiller.Elements.SwitchColor,{Element=BlockText,Property='TextColor3'});
@@ -7382,7 +7854,7 @@ return Args;
 		ValueItems.BorderSizePixel    = 0;
 		ValueItems.ClipsDescendants   = true;
 		ValueItems.Position           = UDim2.new(0.5,0,1,-7);
-		ValueItems.Size               = UDim2.new(1,-25,0,20);
+		ValueItems.Size               = UDim2.new(1,-25,0,22);
 		ValueItems.ZIndex             = Zindex + 5;
 		table.insert(Compkiller.Elements.BGDBColor,{Element=ValueItems,Property="BackgroundColor3"});
 
@@ -7410,12 +7882,12 @@ return Args;
 		ValueText.BackgroundTransparency = 1;
 		ValueText.BorderSizePixel      = 0;
 		ValueText.Position             = UDim2.new(0,21,0.5,0);
-		ValueText.Size                 = UDim2.new(1,-38,0,13);
+		ValueText.Size                 = UDim2.new(1,-38,0,20);
 		ValueText.ZIndex               = Zindex + 8;
-		ValueText.Font                 = Enum.Font.Gotham;
+		ValueText.Font                 = Enum.Font.GothamMedium;
 		ValueText.Text                 = SelectedName();
 		ValueText.TextColor3           = Compkiller.Colors.SwitchColor;
-		ValueText.TextSize             = 11;
+		ValueText.TextSize             = 13;
 		ValueText.TextXAlignment       = Enum.TextXAlignment.Left;
 		ValueText.TextTruncate         = Enum.TextTruncate.AtEnd;
 		table.insert(Compkiller.Elements.SwitchColor,{Element=ValueText,Property='TextColor3'});
@@ -7486,7 +7958,7 @@ return Args;
 			ThumbImg.Image = SelectedImage();
 			ValueText.Text = SelectedName();
 			Config.Callback(item);
-		end);
+		end, Config.Preview);
 
 		repi.EventOut:Connect(function(v)
 			if v then
@@ -7540,6 +8012,9 @@ return Args;
 			Compkiller.Flags[Config.Flag] = iArgs;
 		end;
 
+        Compkiller:_BindControlLabel(Dropdown, BlockText, function(scale)
+            return Compkiller:_InlineControlWidth(LinkValues, LLLayout, scale)
+        end, {Triggers = {{LLLayout, "AbsoluteContentSize"}}})
 		return iArgs;
 	end;
 	-- ─────────────────────────────────────────────────────────────────────────
@@ -7982,7 +8457,7 @@ function Compkiller.new(Config : Window)
 		Keybind = "Insert",
 		Logo = Compkiller.Logo;
 		Scale = Compkiller.Scale.Window,
-		TextSize = 15
+		TextSize = 17
 	});
 
 	local TabHover = Compkiller.__SIGNAL(true);
@@ -8257,7 +8732,7 @@ function Compkiller.new(Config : Window)
 	UserText.Font = Enum.Font.GothamMedium
 	UserText.Text = "Username"
 	UserText.TextColor3 = Compkiller.Colors.SwitchColor
-	UserText.TextSize = 13.000
+	UserText.TextSize = 15
 	UserText.TextXAlignment = Enum.TextXAlignment.Left
 
 	table.insert(Compkiller.Elements.SwitchColor , {
@@ -8276,8 +8751,8 @@ function Compkiller.new(Config : Window)
 	ExpireText.Font = Enum.Font.GothamMedium
 	ExpireText.Text = "0/0/0"
 	ExpireText.TextColor3 = Compkiller.Colors.SwitchColor
-	ExpireText.TextSize = 13.000
-	ExpireText.TextTransparency = 0.500
+	ExpireText.TextSize = 15
+	ExpireText.TextTransparency = 0.25
 	ExpireText.TextXAlignment = Enum.TextXAlignment.Left
 
 	table.insert(Compkiller.Elements.SwitchColor , {
@@ -8307,9 +8782,9 @@ function Compkiller.new(Config : Window)
 		end;
 
 		if v then
-			Compkiller:_Animation(MainFrame,TweenInfo.new(0.2),{
-				Size = Config.Scale
-			})
+            -- Fade at the native layout size. Resizing this root every animation
+            -- frame remeasures every paragraph/section in the window.
+            if MainFrame.Size ~= Config.Scale then MainFrame.Size = Config.Scale end
 
 			Compkiller:_Animation(TabButtonScrollingFrame,TweenInfo.new(0.35),{
 				Position = UDim2.new(0.5, 0, 0.5, 0)
@@ -8332,7 +8807,7 @@ function Compkiller.new(Config : Window)
 			})
 
 			Compkiller:_Animation(ExpireText,TweenInfo.new(0.2),{
-				TextTransparency = 0.5
+				TextTransparency = 0.25
 			})
 
 			Compkiller:_Animation(MainFrame,TweenInfo.new(0.2),{
@@ -8348,9 +8823,7 @@ function Compkiller.new(Config : Window)
 				BackgroundTransparency = TabFrameBaseTrans
 			})
 		else
-			Compkiller:_Animation(MainFrame,TweenInfo.new(0.2),{
-				Size = UDim2.new(math.max(Config.Scale.X.Scale - 0.05,0) , Config.Scale.X.Offset - 10 , math.max(Config.Scale.Y.Scale - 0.05,0) , Config.Scale.Y.Offset - 10)
-			})
+            -- Closing uses opacity; keep content widths and scroll layouts stable.
 
 			Compkiller:_Animation(TabButtonScrollingFrame,TweenInfo.new(0.35),{
 				Position = UDim2.new(1.5, 100, 0.5, 0)
@@ -8411,7 +8884,7 @@ function Compkiller.new(Config : Window)
 
 			Compkiller:_Animation(ExpireText , Style , {
 				Position = UDim2.new(0, 55,0, 25),
-				TextTransparency = 0.5
+				TextTransparency = 0.25
 			});
 		else
 			Compkiller:_Animation(TabFrame , Style , {
@@ -8511,8 +8984,8 @@ function Compkiller.new(Config : Window)
 		CategoryText.Font = Enum.Font.Gotham
 		CategoryText.Text = config.Name
 		CategoryText.TextColor3 = Compkiller.Colors.SwitchColor
-		CategoryText.TextSize = 16.000
-		CategoryText.TextTransparency = 0.500
+		CategoryText.TextSize = 18
+		CategoryText.TextTransparency = 0.25
 		CategoryText.TextXAlignment = Enum.TextXAlignment.Left
 
 		table.insert(Compkiller.Elements.SwitchColor , {
@@ -8542,7 +9015,7 @@ function Compkiller.new(Config : Window)
 		TabHover:Connect(function(bool)
 			if bool then
 				Compkiller:_Animation(CategoryText,Tween,{
-					TextTransparency = 0.500
+					TextTransparency = 0.25
 				});
 
 				Compkiller:_Animation(Frame,Tween,{
@@ -8625,12 +9098,12 @@ function Compkiller.new(Config : Window)
 		TabNameLabel.Font = Enum.Font.GothamMedium
 		TabNameLabel.Text = TabConfig.Name;
 		TabNameLabel.TextColor3 = Compkiller.Colors.SwitchColor
-		TabNameLabel.TextSize = 15.000
+		TabNameLabel.TextSize = 16
 		TabNameLabel.TextXAlignment = Enum.TextXAlignment.Left
 		TabNameLabel.TextScaled = true
 
 		local TabNameLabelConstraint = Instance.new("UITextSizeConstraint")
-		TabNameLabelConstraint.MaxTextSize = 15
+		TabNameLabelConstraint.MaxTextSize = 16
 		TabNameLabelConstraint.Parent = TabNameLabel
 
 		table.insert(Compkiller.Elements.SwitchColor , {
@@ -8704,7 +9177,7 @@ function Compkiller.new(Config : Window)
 		ProgressLabel.Font = Enum.Font.GothamMedium
 		ProgressLabel.Text = ""
 		ProgressLabel.TextColor3 = Compkiller.Colors.Highlight
-		ProgressLabel.TextSize = 13
+		ProgressLabel.TextSize = 14
 		ProgressLabel.TextXAlignment = Enum.TextXAlignment.Right
 		ProgressLabel.ZIndex = 15
 
@@ -8714,11 +9187,17 @@ function Compkiller.new(Config : Window)
 		});
 		
 		TabArgs.ProgressLabel = ProgressLabel
-		function TabArgs:SetProgress(text)
-			if TabArgs.ProgressLabel then
-				TabArgs.ProgressLabel.Text = text or ""
-			end
-		end
+        function TabArgs:SetProgress(text, completed, total)
+            if TabArgs.ProgressLabel then
+                if not text or text == "" then
+                    TabArgs.ProgressETA = nil
+                    TabArgs.ProgressLabel.Text = text or ""
+                else
+                    TabArgs.ProgressETA = TabArgs.ProgressETA or Compkiller.ProgressETA.New()
+                    TabArgs.ProgressLabel.Text = Compkiller.ProgressETA.Update(TabArgs.ProgressETA, text, nil, completed, total)
+                end
+            end
+        end
 
 		-- Functions --
 
@@ -8751,7 +9230,7 @@ function Compkiller.new(Config : Window)
 				});
 
 				Compkiller:_Animation(TabNameLabel,Tween,{
-					TextTransparency = 0.5
+					TextTransparency = 0.25
 				});
 
 				Compkiller:_Animation(Highlight,Tween,{
@@ -8793,7 +9272,7 @@ function Compkiller.new(Config : Window)
 				});
 
 				Compkiller:_Animation(TabNameLabel,Tween,{
-					TextTransparency = 0.5
+					TextTransparency = 0.25
 				});
 			end;
 		end)
@@ -8932,7 +9411,7 @@ function Compkiller.new(Config : Window)
 			TextLabel.Font = Enum.Font.GothamMedium
 			TextLabel.Text = TabConfig.Name
 			TextLabel.TextColor3 = Compkiller.Colors.SwitchColor
-			TextLabel.TextSize = 13.000
+			TextLabel.TextSize = 15
 			TextLabel.TextXAlignment = Enum.TextXAlignment.Left
 
 			table.insert(Compkiller.Elements.SwitchColor , {
@@ -8986,7 +9465,7 @@ function Compkiller.new(Config : Window)
 					})
 
 					Compkiller:_Animation(TextLabel,TweenInfo.new(0.2),{
-						TextTransparency = 0.5
+						TextTransparency = 0.25
 					})
 				end;
 			end;
@@ -10464,7 +10943,7 @@ function Compkiller.new(Config : Window)
 			TabNameLabel.Font = Enum.Font.GothamMedium
 			TabNameLabel.Text = TabConfig.Name;
 			TabNameLabel.TextColor3 = Compkiller.Colors.SwitchColor
-			TabNameLabel.TextSize = 15.000
+			TabNameLabel.TextSize = 16
 			TabNameLabel.TextXAlignment = Enum.TextXAlignment.Left
 
 			table.insert(Compkiller.Elements.SwitchColor , {
@@ -10597,7 +11076,7 @@ function Compkiller.new(Config : Window)
 					});
 
 					Compkiller:_Animation(TabNameLabel,Tween,{
-						TextTransparency = 0.5
+						TextTransparency = 0.25
 					});
 
 					Compkiller:_Animation(Highlight,Tween,{
@@ -10635,7 +11114,7 @@ function Compkiller.new(Config : Window)
 					});
 
 					Compkiller:_Animation(TabNameLabel,Tween,{
-						TextTransparency = 0.5
+						TextTransparency = 0.25
 					});
 				end;
 			end)
@@ -10856,13 +11335,15 @@ function Compkiller.new(Config : Window)
 			SectionText.BorderColor3 = Color3.fromRGB(0, 0, 0)
 			SectionText.BorderSizePixel = 0
 			SectionText.Position = UDim2.new(0, 12, 0.5, 0)
-			SectionText.Size = UDim2.new(0, 200, 0, 25)
+			SectionText.Size = UDim2.new(1, -52, 0, 25)
+            SectionText.TextWrapped = false
+            SectionText.TextTruncate = Enum.TextTruncate.AtEnd
 			SectionText.ZIndex = 10
 			SectionText.Font = Enum.Font.GothamMedium
 			SectionText.Text = config.Name;
 			SectionText.TextColor3 = Compkiller.Colors.SwitchColor
-			SectionText.TextSize = 14.000
-			SectionText.TextTransparency = 0.500
+			SectionText.TextSize = 16
+			SectionText.TextTransparency = 0.25
 			SectionText.TextXAlignment = Enum.TextXAlignment.Left
 
 			table.insert(Compkiller.Elements.SwitchColor , {
@@ -10892,93 +11373,82 @@ function Compkiller.new(Config : Window)
 				UIListLayout = UIListLayout,
 			};
 
-            local refresh = function()
-                Header.Visible = SectionText.Text:byte() ~= nil
-                local contentHeight = math.ceil(UIListLayout.AbsoluteContentSize.Y)
-                Section:SetAttribute('OrigninalScale', contentHeight)
-                Section:SetAttribute('HEIGHTSCALE', IsOpen and (contentHeight + 8) or 35)
-                Section:SetAttribute('Height', nil)
-                Section:SetAttribute('Collapsed', not IsOpen)
-                if IsOpen then
-                    TabArgs.SectionClose[Parent][Section] = nil
+            -- One queued pass per column handles resize/content bursts. Each
+            -- section previously registered a listener that refreshed every sibling.
+            TabArgs.ColumnLayouts = TabArgs.ColumnLayouts or {};
+            local Column = TabArgs.ColumnLayouts[Parent];
+            if not Column then
+                Column = {Queued = false};
+                TabArgs.ColumnLayouts[Parent] = Column;
+                function Column.Request()
+                    if Column.Queued then return; end;
+                    Column.Queued = true;
+                    task.defer(function()
+                        Column.Queued = false;
+                        if not Parent.Parent then return; end;
+                        local Summary = {Height = 0, Count = 0, LastOrder = -math.huge};
+                        for Sibling, Info in pairs(TabArgs.SectionInfo) do
+                            if Sibling.Parent == Parent and Sibling.Visible then
+                                local Closed = TabArgs.SectionClose[Parent][Sibling];
+                                Summary.Height += Closed and 35 or math.ceil(Info.UIListLayout.AbsoluteContentSize.Y) + 8;
+                                Summary.Count += 1;
+                                Summary.LastOrder = math.max(Summary.LastOrder, Sibling.LayoutOrder);
+                            end;
+                        end;
+                        for Sibling, Info in pairs(TabArgs.SectionInfo) do
+                            if Sibling.Parent == Parent and Info.Refresh then Info.Refresh(Summary); end;
+                        end;
+                    end);
+                end;
+                local Connection = Parent:GetPropertyChangedSignal("AbsoluteWindowSize"):Connect(Column.Request);
+                Parent.Destroying:Connect(function()
+                    Connection:Disconnect();
+                    TabArgs.ColumnLayouts[Parent] = nil;
+                end);
+            end;
+            local refresh = function(Summary)
+                if not Summary then Column.Request(); return; end;
+                Header.Visible = SectionText.Text:byte() ~= nil;
+                local ContentHeight = math.ceil(UIListLayout.AbsoluteContentSize.Y);
+                Section:SetAttribute('OrigninalScale', ContentHeight);
+                Section:SetAttribute('HEIGHTSCALE', IsOpen and (ContentHeight + 8) or 35);
+                Section:SetAttribute('Height', nil);
+                Section:SetAttribute('Collapsed', not IsOpen);
+                local Height = IsOpen and (ContentHeight + 8) or 35;
+                if IsOpen and Summary.LastOrder <= Section.LayoutOrder then
+                    local OwnHeight = Section.Visible and (ContentHeight + 8) or 0;
+                    local OtherCount = Summary.Count - (Section.Visible and 1 or 0);
+                    Height = math.max(Height, Parent.AbsoluteWindowSize.Y - (Summary.Height - OwnHeight)
+                        - OtherCount * ParentLayout.Padding.Offset - 16);
+                end;
+                local Size = UDim2.new(1, 0, 0, Height);
+                if Section.Size ~= Size then Section.Size = Size; end;
+            end;
+            TabArgs.SectionInfo[Section].Refresh = refresh;
+            WindowArgs.THREADS[Section] = refresh;
+            local refreshScale = Column.Request;
+            Section.Destroying:Connect(function()
+                WindowArgs.THREADS[Section] = nil;
+                TabArgs.SectionInfo[Section] = nil;
+                TabArgs.SectionClose[Parent][Section] = nil;
+                Column.Request();
+            end);
+            Section.ChildAdded:Connect(refreshScale);
+            Section:GetPropertyChangedSignal("Visible"):Connect(refreshScale);
+            UIListLayout:GetPropertyChangedSignal('AbsoluteContentSize'):Connect(refreshScale);
+
+            TabOpenSignal:Connect(function(bool)
+                if bool then
+                    Column.Request();
+                    Compkiller:_Animation(Section,TweenInfo.new(0.21),{BackgroundTransparency = 0});
+                    Compkiller:_Animation(SectionText,TweenInfo.new(0.21),{TextTransparency = 0.25});
+                    Compkiller:_Animation(SectionClose,TweenInfo.new(0.21),{ImageTransparency = 0.5});
                 else
-                    TabArgs.SectionClose[Parent][Section] = Section
-                end
-                -- The content is already laid out: size immediately so the scroll
-                -- canvas never measures a half-expanded or clipped section.
-                local height = IsOpen and (contentHeight + 8) or 35
-                if IsOpen then
-                    local otherHeight, otherCount, last = 0, 0, true
-                    for sibling, info in pairs(TabArgs.SectionInfo) do
-                        if sibling ~= Section and sibling.Parent == Parent and sibling.Visible then
-                            local closed = TabArgs.SectionClose[Parent][sibling]
-                            otherHeight = otherHeight + (closed and 35 or math.ceil(info.UIListLayout.AbsoluteContentSize.Y) + 8)
-                            otherCount = otherCount + 1
-                            if sibling.LayoutOrder > Section.LayoutOrder then last = false end
-                        end
-                    end
-                    -- Fill spare background space only. Content is always the minimum;
-                    -- overflowing controls continue to extend the scroll canvas.
-                    if last then
-                        height = math.max(height, Parent.AbsoluteWindowSize.Y - otherHeight
-                            - otherCount * ParentLayout.Padding.Offset - 16)
-                    end
-                end
-                Section.Size = UDim2.new(1, 0, 0, height)
-            end
-
-            WindowArgs.THREADS[Section] = refresh
-            local function refreshScale()
-                refresh()
-                for sibling in pairs(TabArgs.SectionInfo) do
-                    if sibling ~= Section and sibling.Parent == Parent and WindowArgs.THREADS[sibling] then
-                        WindowArgs.THREADS[sibling]()
-                    end
-                end
-            end
-            Parent:GetPropertyChangedSignal("AbsoluteWindowSize"):Connect(refreshScale)
-
-			Section.ChildAdded:Connect(function()
-				task.wait()
-				refreshScale();
-			end)
-
-			Section:SetAttribute('HEIGHTSCALE',UIListLayout.AbsoluteContentSize.Y);
-
-			UIListLayout:GetPropertyChangedSignal('AbsoluteContentSize'):Connect(function()
-				Section:SetAttribute('HEIGHTSCALE',UIListLayout.AbsoluteContentSize.Y);
-
-				refreshScale()
-			end);
-
-			TabOpenSignal:Connect(function(bool)
-				if bool then
-                    task.defer(refresh)
-					Compkiller:_Animation(Section,TweenInfo.new(0.21),{
-						BackgroundTransparency = 0
-					})
-
-					Compkiller:_Animation(SectionText,TweenInfo.new(0.21),{
-						TextTransparency = 0.500
-					})
-
-					Compkiller:_Animation(SectionClose,TweenInfo.new(0.21),{
-						ImageTransparency = 0.500
-					})
-				else
-					Compkiller:_Animation(Section,TweenInfo.new(0.21),{
-						BackgroundTransparency = 1
-					})
-
-					Compkiller:_Animation(SectionText,TweenInfo.new(0.21),{
-						TextTransparency = 1
-					})
-
-					Compkiller:_Animation(SectionClose,TweenInfo.new(0.21),{
-						ImageTransparency = 1
-					})
-				end;
-			end);
+                    Compkiller:_Animation(Section,TweenInfo.new(0.21),{BackgroundTransparency = 1});
+                    Compkiller:_Animation(SectionText,TweenInfo.new(0.21),{TextTransparency = 1});
+                    Compkiller:_Animation(SectionClose,TweenInfo.new(0.21),{ImageTransparency = 1});
+                end;
+            end);
 
 			Compkiller:_Input(Header,function()
 				IsOpen = not IsOpen;
@@ -10993,7 +11463,8 @@ function Compkiller.new(Config : Window)
 					});
 				end;
 
-				refresh();
+                TabArgs.SectionClose[Parent][Section] = not IsOpen and Section or nil;
+                refresh();
 
 				refreshScale();
 			end);
@@ -11302,6 +11773,8 @@ function Compkiller.new(Config : Window)
 		end;
 
 		function WindowArgs:Toggle(Value: boolean)
+            CompKiller:SetAttribute("ButterMenuOpen", Value);
+            if not Value then Compkiller:_CloseWindowDropdowns(CompKiller); end;
 			if WindowArgs.PerformanceMode then
 				MainFrame.Visible = Value;
 			end;
@@ -12074,6 +12547,12 @@ function Compkiller.newNotify()
 			UICorner_3.CornerRadius = UDim.new(0, 1)
 			UICorner_3.Parent = TimeLeft
 
+            local progressETA = Compkiller.ProgressETA.New()
+            local progressLabel, progressFraction = Body.Text, nil
+            local function progressText()
+                Body.Text = progressFraction ~= nil and Compkiller.ProgressETA.Update(progressETA, progressLabel, progressFraction) or progressLabel
+            end
+
 			local UpdateText = function()
 				local TitleScale = TextService:GetTextSize(Header.Text,Header.TextSize,Header.Font,Vector2.new(math.huge,math.huge));
 				local BodyScale = TextService:GetTextSize(Body.Text,Body.TextSize,Body.Font,Vector2.new(math.huge,math.huge));
@@ -12140,11 +12619,14 @@ function Compkiller.newNotify()
 				end,
 
 				Content = function(self , new)
-					Body.Text = new;
+                    progressLabel = new
+                    progressText()
 					UpdateText();
 				end,
 
 				SetProgress = function(self , new , Time)
+                    progressFraction = new > 1 and new / 100 or new
+                    progressText()
 					if Time and Time <= 0 then
 						TimeLeft.Size = UDim2.new(new, 0, 1, 0);
 
