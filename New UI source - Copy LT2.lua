@@ -6473,7 +6473,13 @@ end
             BlockText.Visible = titleVisible
             BlockLine.Visible = titleVisible
             BlockText.TextWrapped = true
-            local width = math.max(Paragraph.AbsoluteSize.X, 1)
+            local scale, ancestor = 1, Paragraph
+            while ancestor do
+                local fit = ancestor.FindFirstChildOfClass and ancestor:FindFirstChildOfClass("UIScale")
+                if fit then scale *= fit.Scale end
+                ancestor = ancestor.Parent
+            end
+            local width = math.max(Paragraph.AbsoluteSize.X / math.max(scale, 0.001), 1)
             if width <= 1 then return end
             local titleHeight = titleVisible and math.ceil(TextService:GetTextSize(
                 BlockText.Text:gsub("<[^>]*>", ""), BlockText.TextSize, BlockText.Font,
@@ -8509,7 +8515,7 @@ function Compkiller.new(Config : Window)
 	local TabMainFrame = Instance.new("Frame")
 
 	UIListLayout:GetPropertyChangedSignal('AbsoluteContentSize'):Connect(function()
-		TabButtonScrollingFrame.CanvasSize = UDim2.fromOffset(0,UIListLayout.AbsoluteContentSize.Y)
+        TabButtonScrollingFrame.CanvasSize = UDim2.fromOffset(0,math.ceil(UIListLayout.AbsoluteContentSize.Y / math.max(WindowArgs.ResolutionScale or 1, 0.001)))
 	end);
 
 	CompKiller.Name = "u?name=compkiller_"..Compkiller:_RandomString();
@@ -8550,10 +8556,10 @@ function Compkiller.new(Config : Window)
 			local Height = Viewport.Y * Config.Scale.Y.Scale + Config.Scale.Y.Offset;
 			-- Expanded sidebar extends 160 logical pixels left of the main frame.
 			-- Keep breathing room instead of filling a small Roblox window edge to edge.
-			local Scale = math.min(1, Viewport.X * 0.75 / math.max(1, Width + 160),
-				Viewport.Y * 0.75 / math.max(1, Height));
-			FitScale.Scale = Scale;
+			local Scale = math.min(1, math.max(1, Viewport.X - 24) / math.max(1, Width + 160),
+				math.max(1, Viewport.Y - 24) / math.max(1, Height));
 			WindowArgs.ResolutionScale = Scale;
+			FitScale.Scale = Scale;
 			-- Recenter after rotation/resizing, including the sidebar footprint.
 			MainFrame.Position = UDim2.new(0.5, 80 * Scale, 0.5, 0);
 		end;
@@ -9533,7 +9539,8 @@ function Compkiller.new(Config : Window)
 
         local function update()
             if not Scrolling.Parent then return end
-            Scrolling.CanvasSize = UDim2.fromOffset(0, math.ceil(ListLayout.AbsoluteContentSize.Y) + 16)
+            local scale = math.max(WindowArgs.ResolutionScale or 1, 0.001)
+            Scrolling.CanvasSize = UDim2.fromOffset(0, math.ceil(ListLayout.AbsoluteContentSize.Y / scale) + 16)
         end
         local contentConnection = ListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(update)
         local sizeConnection = Scrolling:GetPropertyChangedSignal("AbsoluteSize"):Connect(update)
@@ -11390,7 +11397,7 @@ function Compkiller.new(Config : Window)
                         for Sibling, Info in pairs(TabArgs.SectionInfo) do
                             if Sibling.Parent == Parent and Sibling.Visible then
                                 local Closed = TabArgs.SectionClose[Parent][Sibling];
-                                Summary.Height += Closed and 35 or math.ceil(Info.UIListLayout.AbsoluteContentSize.Y) + 8;
+                                Summary.Height += Closed and 35 or math.ceil(Info.UIListLayout.AbsoluteContentSize.Y / math.max(WindowArgs.ResolutionScale or 1, 0.001)) + 8;
                                 Summary.Count += 1;
                                 Summary.LastOrder = math.max(Summary.LastOrder, Sibling.LayoutOrder);
                             end;
@@ -11409,7 +11416,7 @@ function Compkiller.new(Config : Window)
             local refresh = function(Summary)
                 if not Summary then Column.Request(); return; end;
                 Header.Visible = SectionText.Text:byte() ~= nil;
-                local ContentHeight = math.ceil(UIListLayout.AbsoluteContentSize.Y);
+                local ContentHeight = math.ceil(UIListLayout.AbsoluteContentSize.Y / math.max(WindowArgs.ResolutionScale or 1, 0.001));
                 Section:SetAttribute('OrigninalScale', ContentHeight);
                 Section:SetAttribute('HEIGHTSCALE', IsOpen and (ContentHeight + 8) or 35);
                 Section:SetAttribute('Height', nil);
@@ -11418,7 +11425,7 @@ function Compkiller.new(Config : Window)
                 if IsOpen and Summary.LastOrder <= Section.LayoutOrder then
                     local OwnHeight = Section.Visible and (ContentHeight + 8) or 0;
                     local OtherCount = Summary.Count - (Section.Visible and 1 or 0);
-                    Height = math.max(Height, Parent.AbsoluteWindowSize.Y - (Summary.Height - OwnHeight)
+                    Height = math.max(Height, Parent.AbsoluteWindowSize.Y / math.max(WindowArgs.ResolutionScale or 1, 0.001) - (Summary.Height - OwnHeight)
                         - OtherCount * ParentLayout.Padding.Offset - 16);
                 end;
                 local Size = UDim2.new(1, 0, 0, Height);
