@@ -71,6 +71,7 @@ export type Watermark = {
 	Icon: string,
 	Text: string,
 	ShowIcon: boolean?,
+	ShowText: boolean?,
 	TextColor: Color3?,
 	IconColor: Color3?,
 	Font: Enum.Font?,
@@ -109,6 +110,7 @@ export type Section = {
 };
 
 export type Toggle = {
+	Icon: string?,
 	Name: string,
 	Default: boolean,
 	Flag: string | nil,
@@ -157,6 +159,7 @@ export type Slider = {
 };
 
 export type Dropdown = {
+	Icon: string?,
 	Name: string,
 	Default: string | {string},
 	Values: {string},
@@ -168,6 +171,7 @@ export type Dropdown = {
 };
 
 export type Button = {
+	Icon: string?,
 	Name: string,
 	Cooldown: number?,
 	AllowConcurrent: boolean?,
@@ -1518,12 +1522,163 @@ Compkiller.FontAwesome = {
 	['magnifying-glass'] = "rbxassetid://74387839235930",
 };
 
+Compkiller.IconAliases = {["house"]="home",["grid-2x2"]="grid",["arrow-down-up"]="arrow-up-down",["circle-check"]="check-circle-2",["circle-x"]="x-circle",["triangle-alert"]="alert-triangle",["loader-circle"]="loader-2",["lock-keyhole"]="lock",["wand-sparkles"]="wand-2"};
 function Compkiller:_GetIcon(name : string , font_aws) : string
 	if font_aws then
 		return Compkiller.FontAwesome[name] or name;
 	end;
 
+	local plain = tostring(name):gsub("^lucide%-", "");
+	name = Compkiller.IconAliases[plain] or name;
 	return Compkiller.Lucide['lucide-'..tostring(name)] or Compkiller.Lucide[name] or Compkiller.Lucide[tostring(name)] or Compkiller.FontAwesome[name] or name;
+end;
+
+-- Land Plot, adapted from https://lucide.dev/icons/land-plot (24x24, stroke 2).
+-- ISC License: Copyright (c) 2026 Lucide Icons and Contributors
+-- Permission to use, copy, modify, and/or distribute this software for any purpose
+-- with or without fee is hereby granted, provided that the above copyright notice
+-- and this permission notice appear in all copies.
+-- THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+-- REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+-- FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+-- INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
+-- OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+-- TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+-- THIS SOFTWARE.
+function Compkiller:_DrawLandPlotIcon(icon)
+    icon.Image = "";
+    local outline = Instance.new("Frame");
+    outline.Name, outline.BackgroundTransparency = "LucideOutline", 1;
+    outline.Size, outline.Parent = UDim2.fromScale(1,1), icon;
+    local strokes = {};
+    -- Flag, plot boundary (rounded arc samples), and the two plot grid lines.
+    local paths = {
+        {{12,8},{18,5},{12,2},{12,12}},
+        {{8,11.99},{2.5,15.13},{2.13,15.5},{1.99,16},{2.13,16.5},{2.5,16.87},
+            {11,21.73},{11.48,21.93},{12,22},{12.52,21.93},{13,21.73},
+            {21.5,16.87},{21.87,16.5},{22.01,16},{21.87,15.5},{21.5,15.13},{16,12}},
+        {{6.49,12.85},{17.51,19.15}},
+        {{17.51,12.85},{6.5,19.15}},
+    };
+    for _, path in ipairs(paths) do
+        for index = 2, #path do
+            local a, b = path[index-1], path[index];
+            local dx, dy = b[1]-a[1], b[2]-a[2];
+            local stroke = Instance.new("Frame");
+            stroke.Name = "LandPlotStroke";
+            stroke.AnchorPoint = Vector2.new(0.5,0.5);
+            stroke.Position = UDim2.fromScale((a[1]+b[1])/48,(a[2]+b[2])/48);
+            stroke.Size = UDim2.fromScale((math.sqrt(dx*dx+dy*dy)+2)/24,2/24);
+            stroke.Rotation = math.deg(math.atan2(dy,dx));
+            stroke.BackgroundColor3 = icon.ImageColor3;
+            stroke.BorderSizePixel = 0;
+            stroke.ZIndex = icon.ZIndex;
+            stroke.Parent = outline;
+            local corner = Instance.new("UICorner",stroke);
+            corner.CornerRadius = UDim.new(1,0);
+            table.insert(strokes,stroke);
+        end;
+    end;
+    local function sync()
+        outline.ZIndex = icon.ZIndex;
+        for _, stroke in ipairs(strokes) do
+            stroke.BackgroundColor3, stroke.BackgroundTransparency, stroke.ZIndex = icon.ImageColor3, icon.ImageTransparency, icon.ZIndex;
+        end;
+    end;
+    local connections = {};
+    for _, property in ipairs({"ImageColor3","ImageTransparency","ZIndex"}) do
+        table.insert(connections,icon:GetPropertyChangedSignal(property):Connect(sync));
+    end;
+    outline.Destroying:Connect(function() for _, connection in ipairs(connections) do connection:Disconnect(); end; end);
+    sync();
+end;
+
+-- Additional Lucide outlines: blend, group, square-dashed, circle-dollar-sign
+-- and badge-dollar-sign. Same ISC license above; official geometry sampled once.
+Compkiller.NativeIconPaths = {
+    ["blend"] = {{{22,9},{21.657,11.163},{20.663,13.114},{19.114,14.663},{17.163,15.657},{15,16},{12.837,15.657},{10.886,14.663},{9.337,13.114},{8.343,11.163},{8,9},{8.343,6.837},{9.337,4.886},{10.886,3.337},{12.837,2.343},{15,2},{17.163,2.343},{19.114,3.337},{20.663,4.886},{21.657,6.837},{22,9}},{{16,15},{15.657,17.163},{14.663,19.114},{13.114,20.663},{11.163,21.657},{9,22},{6.837,21.657},{4.886,20.663},{3.337,19.114},{2.343,17.163},{2,15},{2.343,12.837},{3.337,10.886},{4.886,9.337},{6.837,8.343},{9,8},{11.163,8.343},{13.114,9.337},{14.663,10.886},{15.657,12.837},{16,15}}},
+    ["group"] = {{{3,7},{3,5},{3.15,4.23},{3.59,3.59},{4.23,3.15},{5,3},{7,3}},{{17,3},{19,3},{19.77,3.15},{20.41,3.59},{20.85,4.23},{21,5},{21,7}},{{21,17},{21,19},{20.85,19.77},{20.41,20.41},{19.77,20.85},{19,21},{17,21}},{{7,21},{5,21},{4.23,20.85},{3.59,20.41},{3.15,19.77},{3,19},{3,17}},{{13,7},{13.5,7.134},{13.866,7.5},{14,8},{14,11},{13.866,11.5},{13.5,11.866},{13,12},{8,12},{7.5,11.866},{7.134,11.5},{7,11},{7,8},{7.134,7.5},{7.5,7.134},{8,7},{13,7}},{{16,12},{16.5,12.134},{16.866,12.5},{17,13},{17,16},{16.866,16.5},{16.5,16.866},{16,17},{11,17},{10.5,16.866},{10.134,16.5},{10,16},{10,13},{10.134,12.5},{10.5,12.134},{11,12},{16,12}}},
+    ["square-dashed"] = {{{3,5},{3.152,4.235},{3.586,3.586},{4.235,3.152},{5,3}},{{19,3},{19.765,3.152},{20.414,3.586},{20.848,4.235},{21,5}},{{21,19},{20.848,19.765},{20.414,20.414},{19.765,20.848},{19,21}},{{5,21},{4.235,20.848},{3.586,20.414},{3.152,19.765},{3,19}},{{9,3},{10,3}},{{9,21},{10,21}},{{14,3},{15,3}},{{14,21},{15,21}},{{3,9},{3,10}},{{21,9},{21,10}},{{3,14},{3,15}},{{21,14},{21,15}}},
+    ["circle-dollar-sign"] = {{{22,12},{21.749,14.225},{21.01,16.339},{19.818,18.235},{18.235,19.818},{16.339,21.01},{14.225,21.749},{12,22},{9.775,21.749},{7.661,21.01},{5.765,19.818},{4.182,18.235},{2.99,16.339},{2.251,14.225},{2,12},{2.251,9.775},{2.99,7.661},{4.182,5.765},{5.765,4.182},{7.661,2.99},{9.775,2.251},{12,2},{14.225,2.251},{16.339,2.99},{18.235,4.182},{19.818,5.765},{21.01,7.661},{21.749,9.775},{22,12}},{{16,8},{10,8},{9.235,8.152},{8.586,8.586},{8.152,9.235},{8,10},{8.152,10.765},{8.586,11.414},{9.235,11.848},{10,12},{14,12},{14.765,12.152},{15.414,12.586},{15.848,13.235},{16,14},{15.848,14.765},{15.414,15.414},{14.765,15.848},{14,16},{8,16}},{{12,18},{12,6}}},
+    ["badge-dollar-sign"] = {{{3.85,8.62},{3.822,7.023},{4.421,5.543},{5.552,4.415},{7.033,3.819},{8.63,3.85},{8.63,3.85},{9.738,2.706},{11.204,2.085},{12.796,2.085},{14.262,2.706},{15.37,3.85},{15.37,3.85},{16.969,3.818},{18.453,4.416},{19.584,5.547},{20.182,7.031},{20.15,8.63},{20.15,8.63},{21.294,9.738},{21.915,11.204},{21.915,12.796},{21.294,14.262},{20.15,15.37},{20.15,15.37},{20.181,16.967},{19.585,18.448},{18.457,19.579},{16.977,20.178},{15.38,20.15},{15.38,20.15},{14.272,21.299},{12.803,21.923},{11.207,21.923},{9.738,21.299},{8.63,20.15},{8.63,20.15},{7.033,20.181},{5.552,19.585},{4.421,18.457},{3.822,16.977},{3.85,15.38},{3.85,15.38},{2.697,14.272},{2.07,12.8},{2.07,11.2},{2.697,9.728},{3.85,8.62}},{{16,8},{10,8},{9.235,8.152},{8.586,8.586},{8.152,9.235},{8,10},{8.152,10.765},{8.586,11.414},{9.235,11.848},{10,12},{14,12},{14.765,12.152},{15.414,12.586},{15.848,13.235},{16,14},{15.848,14.765},{15.414,15.414},{14.765,15.848},{14,16},{8,16}},{{12,18},{12,6}}},
+};
+
+-- Sets an icon without carrying atlas crop rectangles into the new pack.
+-- Native fallbacks share image tint, fade and layer state; no polling or HTTP.
+function Compkiller:_SetIcon(icon, name)
+    local previous = icon:FindFirstChild("LucideOutline");
+    if previous then previous:Destroy(); end;
+    local plain = tostring(name):gsub("^lucide%-", "");
+    icon.ImageRectOffset, icon.ImageRectSize = Vector2.zero, Vector2.zero;
+    icon.ScaleType = Enum.ScaleType.Fit;
+    icon:SetAttribute("LucideIcon", plain);
+    if plain == "land-plot" then
+        self:_DrawLandPlotIcon(icon);
+        return;
+    end;
+    local paths = self.NativeIconPaths[plain];
+    if not paths then icon.Image = self:_GetIcon(name); return; end;
+    icon.Image = "";
+    local outline = Instance.new("Frame");
+    outline.Name, outline.BackgroundTransparency = "LucideOutline", 1;
+    outline.Size, outline.Parent = UDim2.fromScale(1,1), icon;
+    local strokes = {};
+    for _, path in ipairs(paths) do
+        for index = 2, #path do
+            local a, b = path[index-1], path[index];
+            local dx, dy = b[1]-a[1], b[2]-a[2];
+            local stroke = Instance.new("Frame");
+            stroke.AnchorPoint = Vector2.new(0.5,0.5);
+            stroke.Position = UDim2.fromScale((a[1]+b[1])/48,(a[2]+b[2])/48);
+            stroke.Size = UDim2.fromScale((math.sqrt(dx*dx+dy*dy)+1)/24,2/24);
+            stroke.Rotation = math.deg(math.atan2(dy,dx));
+            stroke.BorderSizePixel, stroke.Parent = 0, outline;
+            Instance.new("UICorner",stroke).CornerRadius = UDim.new(1,0);
+            table.insert(strokes,stroke);
+        end;
+    end;
+    local function sync()
+        outline.ZIndex = icon.ZIndex;
+        for _, stroke in ipairs(strokes) do
+            stroke.BackgroundColor3, stroke.BackgroundTransparency = icon.ImageColor3, icon.ImageTransparency;
+            stroke.ZIndex = icon.ZIndex;
+        end;
+    end;
+    local connections = {};
+    for _, property in ipairs({"ImageColor3","ImageTransparency","ZIndex"}) do
+        table.insert(connections,icon:GetPropertyChangedSignal(property):Connect(sync));
+    end;
+    outline.Destroying:Connect(function()
+        for _, connection in ipairs(connections) do connection:Disconnect(); end;
+    end);
+    sync();
+end;
+
+-- Optional leading action icon; bind to the label so palette and fades agree.
+function Compkiller:_ControlIcon(label, name, centered)
+    if not name then return; end;
+    local icon = Instance.new("ImageLabel");
+    icon.Name, icon.BackgroundTransparency = "ActionIcon", 1;
+    icon.AnchorPoint = Vector2.new(0,label.AnchorPoint.Y);
+    icon.Position = UDim2.new(0,centered and 8 or 12,label.Position.Y.Scale,
+        label.Position.Y.Offset + (0.5-label.AnchorPoint.Y)*(label.Size.Y.Offset-16));
+    icon.Size, icon.Parent = UDim2.fromOffset(16,16), label.Parent;
+    local function sync()
+        icon.ImageColor3, icon.ImageTransparency, icon.ZIndex = label.TextColor3, label.TextTransparency, label.ZIndex;
+    end;
+    local connections = {};
+    for _, property in ipairs({"TextColor3","TextTransparency","ZIndex"}) do
+        table.insert(connections,label:GetPropertyChangedSignal(property):Connect(sync));
+    end;
+    icon.Destroying:Connect(function()
+        for _, connection in ipairs(connections) do connection:Disconnect(); end;
+    end);
+    sync();
+    self:_SetIcon(icon,name);
+    label.Position = centered and UDim2.new(0,32,0.5,0) or UDim2.new(0,36,label.Position.Y.Scale,label.Position.Y.Offset);
+    label.AnchorPoint = Vector2.new(0, label.AnchorPoint.Y);
+    label.TextXAlignment = Enum.TextXAlignment.Left;
+    return icon;
 end;
 
 function Compkiller:_RandomString() : string
@@ -1543,6 +1698,38 @@ function Compkiller:_IsMouseOverFrame(Frame : Frame) : boolean
 	return false;
 end;
 
+
+-- Approved Butter action roles; other controls keep their existing presentation.
+Compkiller.ActionIcons = {
+    ["Lasso Selector (Drag)"]="lasso-select",
+    ["Click Group Selection"]="group",
+    ["Click Selection"]="mouse-pointer-2",
+    ["Deselect"]="square-dashed",
+    ["Group Selection Owner"]="users",
+    ["Owner Filter"]="users",
+    ["Open Selected Boxes"]="package-open",
+    ["Sell Selected Plank"]="circle-dollar-sign",
+    ["Teleport (Selected)"]="map-pin",
+    ["Teleport Position"]="map-pin",
+    ["Start Stacker"]="layers",
+    ["Stop Stacker"]="square",
+    ["Stop"]="square",
+    ["Abort"]="square",
+    ["Truck Bed Stacker"]="truck",
+    ["Get Tree"]="axe",
+    ["Get Wood"]="axe",
+    ["Mod Wood"]="wand-sparkles",
+    ["Dismember Tree"]="scissors",
+    ["One Unit Cutter"]="ruler",
+    ["Mod Sawmill"]="settings-2",
+    ["Auto Sawmill"]="settings-2",
+    ["Tree Sell Calculator"]="calculator",
+    ["Use Calculator On Logs"]="calculator",
+    ["Use Calculator On Planks"]="calculator",
+    ["Sell Tree (Click)"]="badge-dollar-sign",
+    ["Save"]="save",
+    ["Load"]="folder-open",
+};
 -- ── Shared input dispatchers ────────────────────────────────────────────────
 -- Persist across re-executions so loadstring() does not stack global connections.
 local __ButterUI = getgenv().__ButterUI
@@ -1611,28 +1798,40 @@ function Compkiller:_CleanupPreviousWindows()
 	end;
 end;
 
-function Compkiller:_RegisterClickListener(fn)
-	local key = tostring({});
+function Compkiller:_RegisterClickListener(fn, owner)
+	local key = {};
 	Compkiller._ClickListeners[key] = fn;
-	return function()
+	local destroyed;
+	local function unregister()
+		if destroyed then destroyed:Disconnect(); destroyed = nil; end;
 		Compkiller._ClickListeners[key] = nil;
 	end;
+	if owner then destroyed = owner.Destroying:Connect(unregister); end;
+	return unregister;
 end;
 
-function Compkiller:_RegisterInputChangedListener(fn)
-	local key = tostring({});
+function Compkiller:_RegisterInputChangedListener(fn, owner)
+	local key = {};
 	Compkiller._InputChangedListeners[key] = fn;
-	return function()
+	local destroyed;
+	local function unregister()
+		if destroyed then destroyed:Disconnect(); destroyed = nil; end;
 		Compkiller._InputChangedListeners[key] = nil;
 	end;
+	if owner then destroyed = owner.Destroying:Connect(unregister); end;
+	return unregister;
 end;
 
-function Compkiller:_RegisterKeybindHandler(fn)
-	local key = tostring({});
+function Compkiller:_RegisterKeybindHandler(fn, owner)
+	local key = {};
 	__ButterUI.KeybindHandlers[key] = fn;
-	return function()
+	local destroyed;
+	local function unregister()
+		if destroyed then destroyed:Disconnect(); destroyed = nil; end;
 		__ButterUI.KeybindHandlers[key] = nil;
 	end;
+	if owner then destroyed = owner.Destroying:Connect(unregister); end;
+	return unregister;
 end;
 
 function Compkiller:_TrackWindowState(id, state)
@@ -1989,6 +2188,20 @@ function Compkiller:_BindDropdownHover(Frame, OnHover, Release)
 	end);
 end;
 
+function Compkiller:_BindColor(bucket, binding)
+    table.insert(bucket, binding)
+    binding.PaletteIndex = #bucket
+    binding.Element.Destroying:Connect(function()
+        local index = binding.PaletteIndex
+        if bucket[index] ~= binding then return end
+        local last = bucket[#bucket]
+        bucket[index], bucket[#bucket] = last, nil
+        if last ~= binding then last.PaletteIndex = index end
+        binding.Element, binding.PaletteIndex = nil, nil
+    end)
+    return binding
+end
+
 function Compkiller:_AddDragBlacklist(Frame: Frame)
 	local IsAdded = false;
 	local BASE_TIME = 0.01;
@@ -2017,7 +2230,7 @@ function Compkiller:_AddDragBlacklist(Frame: Frame)
 		SET_BLACKLIST(false);
 	end);
 
-	Compkiller:_RegisterInputChangedListener(function(input)
+	local unregisterInput = Compkiller:_RegisterInputChangedListener(function(input)
 		if input.UserInputType ~= Enum.UserInputType.MouseMovement
 			and input.UserInputType ~= Enum.UserInputType.Touch then
 			return;
@@ -2026,6 +2239,10 @@ function Compkiller:_AddDragBlacklist(Frame: Frame)
 		if not Compkiller:_IsMouseOverFrame(Frame) then
 			SET_BLACKLIST(false);
 		end;
+	end, Frame);
+	Frame.Destroying:Connect(function()
+		unregisterInput();
+		SET_BLACKLIST(false);
 	end);
 end;
 
@@ -2053,6 +2270,11 @@ function Compkiller.__SIGNAL(default)
 
 		local signal = Bindable.Event:Connect(event);
 
+		-- Drop disconnected records on each subscription (row refreshes disconnect
+		-- the previous batch before subscribing again).
+		for index = #Binds.__signals, 1, -1 do
+			if Binds.__signals[index].Connected == false then table.remove(Binds.__signals, index); end;
+		end;
 		table.insert(Binds.__signals,signal);
 
 		return signal;
@@ -2338,6 +2560,7 @@ function Compkiller:Drag(InputFrame: Frame, MoveFrame: Frame, Speed : number)
 	local dragStart: Vector3 = nil;
 	local startPos: UDim2 = nil;
 	local Tween = TweenInfo.new(Speed);
+	local dragEndConnection;
 
 	local function updateInput(input)
 		local delta = input.Position - dragStart;
@@ -2354,10 +2577,12 @@ function Compkiller:Drag(InputFrame: Frame, MoveFrame: Frame, Speed : number)
 			dragToggle = true
 			dragStart = input.Position
 			startPos = MoveFrame.Position
-			input.Changed:Connect(function()
+			if dragEndConnection then dragEndConnection:Disconnect(); end;
+			dragEndConnection = input.Changed:Connect(function()
 				if input.UserInputState == Enum.UserInputState.End then
 					dragToggle = false;
 					Compkiller.IS_DRAG_MOVE = false;
+					if dragEndConnection then dragEndConnection:Disconnect(); dragEndConnection = nil; end;
 				end
 			end)
 		end
@@ -2390,6 +2615,10 @@ function Compkiller:Drag(InputFrame: Frame, MoveFrame: Frame, Speed : number)
 		end
 
 		Compkiller.IaDrag = dragToggle;
+	end, InputFrame);
+	InputFrame.Destroying:Connect(function()
+		dragToggle = false;
+		if dragEndConnection then dragEndConnection:Disconnect(); dragEndConnection = nil; end;
 	end);
 end;
 
@@ -2661,7 +2890,7 @@ function Compkiller:_AddLinkValue(Name , Default , GlobalBlock , LinkValues , re
 		Keybind.BackgroundTransparency = 0.8
 		Keybind.BorderColor3 = Color3.fromRGB(0, 0, 0)
 		Keybind.BorderSizePixel = 0
-		Keybind.Size = UDim2.new(0, 45, 0, 16)
+		Keybind.Size = UDim2.new(0, 28, 0, 22)
 		Keybind.ZIndex = GlobalBlock.ZIndex + 2
 		Keybind.ClipsDescendants = true
 		Keybind.LayoutOrder = -#LinkValues:GetChildren();
@@ -2689,12 +2918,14 @@ function Compkiller:_AddLinkValue(Name , Default , GlobalBlock , LinkValues , re
 		TextLabel.BorderColor3 = Color3.fromRGB(0, 0, 0)
 		TextLabel.BorderSizePixel = 0
 		TextLabel.Position = UDim2.new(0.5, 0, 0.5, 0)
-		TextLabel.Size = UDim2.new(1, -5, 1, -5)
+		TextLabel.Size = UDim2.new(1, -16, 1, 0)
 		TextLabel.ZIndex = GlobalBlock.ZIndex + 3
 		TextLabel.Font = Enum.Font.GothamMedium
 		TextLabel.Text = GetItem(Default or "None");
 		TextLabel.TextColor3 = Compkiller.Colors.SwitchColor
 		TextLabel.TextSize = 14
+		TextLabel.TextXAlignment = Enum.TextXAlignment.Center
+		TextLabel.TextYAlignment = Enum.TextYAlignment.Center
 		TextLabel.TextTransparency = 000
 
 		table.insert(Compkiller.Elements.SwitchColor,{
@@ -2703,11 +2934,7 @@ function Compkiller:_AddLinkValue(Name , Default , GlobalBlock , LinkValues , re
 		});
 
 		local Update = function()
-			local size = TextService:GetTextSize(TextLabel.Text,TextLabel.TextSize,TextLabel.Font,Vector2.new(math.huge,math.huge));
-
-			Compkiller:_Animation(Keybind,TweenInfo.new(0.1),{
-				Size = UDim2.new(0, size.X + 5, 0, 16)
-			});
+			Keybind.Size = Compkiller:_ControlFieldSize(TextLabel);
 		end;
 
 		Update();
@@ -2765,7 +2992,7 @@ function Compkiller:_AddLinkValue(Name , Default , GlobalBlock , LinkValues , re
 		InfoButton.LayoutOrder = -#LinkValues:GetChildren();
 		InfoButton.Size = UDim2.new(0, 15, 0, 15)
 		InfoButton.ZIndex = GlobalBlock.ZIndex + 25
-		InfoButton.Image = "rbxassetid://10723415903"
+		Compkiller:_SetIcon(InfoButton,"info")
 		InfoButton.ImageTransparency = 0.500
 
 		UICorner.CornerRadius = UDim.new(1, 0)
@@ -2852,7 +3079,7 @@ function Compkiller:_AddLinkValue(Name , Default , GlobalBlock , LinkValues , re
 		OptionButton.BorderSizePixel = 0
 		OptionButton.Size = UDim2.new(0, 15, 0, 15)
 		OptionButton.ZIndex = GlobalBlock.ZIndex + 2
-		OptionButton.Image = "rbxassetid://14007344336"
+		Compkiller:_SetIcon(OptionButton,"settings-2")
 		OptionButton.ImageTransparency = 0.500
 		OptionButton.LayoutOrder = -#LinkValues:GetChildren();
 
@@ -2889,6 +3116,25 @@ function Compkiller:_AddLinkValue(Name , Default , GlobalBlock , LinkValues , re
 	end;
 end;
 
+-- Logical dimensions keep fields aligned when the window uses UIScale.
+function Compkiller:_GetUIScale(root)
+    local scale, ancestor = 1, root
+    while ancestor do
+        local uiScale = ancestor:FindFirstChildOfClass("UIScale")
+        if uiScale then scale *= uiScale.Scale end
+        ancestor = ancestor.Parent
+    end
+    return math.max(scale, 0.001)
+end
+function Compkiller:_ControlFieldSize(label, minimum, maximum)
+    local text = label.Text
+    if text == "" and label:IsA("TextBox") then text = label.PlaceholderText end
+    local measured = TextService:GetTextSize(text, label.TextSize, label.Font, Vector2.new(math.huge, math.huge)).X
+    local width = math.max(minimum or 28, math.ceil(measured) + 16)
+    if maximum then width = math.min(width, math.max(minimum or 28, math.floor(maximum))) end
+    return UDim2.fromOffset(width, 22)
+end
+
 -- Measure inline controls in logical pixels, independent of layout/viewport scale.
 function Compkiller:_InlineControlWidth(container, layout, scale)
     local width, count = 0, 0
@@ -2908,20 +3154,14 @@ function Compkiller:_BindControlLabel(root, label, reservedWidth, options)
     options = options or {}
     local baseHeight = options.BaseHeight or root.Size.Y.Offset
     local labelHeight = options.LabelHeight or 25
-    local padding = options.Padding or 24
+    local padding = (options.Padding or 24) + (options.Icon and 24 or 0)
     local alive, queued, lastKey = true, false, nil
     local connections = {}
     label.TextWrapped = true
     local function refresh()
         queued = false
         if not alive or not root.Parent then return end
-        local scale, ancestor = 1, root
-        while ancestor do
-            local uiScale = ancestor:FindFirstChildOfClass("UIScale")
-            if uiScale then scale *= uiScale.Scale end
-            ancestor = ancestor.Parent
-        end
-        scale = math.max(scale, 0.001)
+        local scale = Compkiller:_GetUIScale(root)
         local width = root.AbsoluteSize.X / scale
         if width <= padding then return end
         local reserved = math.max(0, reservedWidth and reservedWidth(scale) or 0)
@@ -2957,7 +3197,7 @@ function Compkiller:_BindControlLabel(root, label, reservedWidth, options)
     request()
     return request
 end
-function Compkiller:_CreateBlock(Signal)
+function Compkiller:_CreateBlock(Signal, iconName)
 	local GlobalBlock = Instance.new("Frame")
 	local BlockText = Instance.new("TextLabel")
 	local LinkValues = Instance.new("Frame")
@@ -2998,12 +3238,12 @@ function Compkiller:_CreateBlock(Signal)
 
 	LinkValues.Name = Compkiller:_RandomString()
 	LinkValues.Parent = GlobalBlock
-	LinkValues.AnchorPoint = Vector2.new(1, 0.540000021)
+	LinkValues.AnchorPoint = Vector2.new(1, 0.5)
 	LinkValues.BackgroundTransparency = 1.000
 	LinkValues.BorderColor3 = Color3.fromRGB(0, 0, 0)
 	LinkValues.BorderSizePixel = 0
 	LinkValues.Position = UDim2.new(1, -12, 0.5, 0)
-	LinkValues.Size = UDim2.new(1, 0, 0, 18)
+	LinkValues.Size = UDim2.new(1, 0, 0, 22)
 	LinkValues.ZIndex = 11
 
 	UIListLayout.Parent = LinkValues
@@ -3040,9 +3280,15 @@ function Compkiller:_CreateBlock(Signal)
 	end;
 
 	function rep:SetTextColor(Color)
-		local oldIndex = table.find(Compkiller.Elements.SwitchColor , BlockText);
-
-		table.remove(Compkiller.Elements.SwitchColor , oldIndex);
+		local bucket = Compkiller.Elements.SwitchColor;
+		for index, binding in ipairs(bucket) do
+			if binding.Element == BlockText then
+				local last = bucket[#bucket];
+				bucket[index], bucket[#bucket] = last, nil;
+				if last ~= binding and last.PaletteIndex then last.PaletteIndex = index; end;
+				break;
+			end;
+		end;
 
 		BlockText.TextColor3 = Color;
 
@@ -3100,9 +3346,10 @@ function Compkiller:_CreateBlock(Signal)
 		return Compkiller:_AddLinkValue(Name , Default , GlobalBlock , LinkValues , rep , Signal);
 	end;
 
+    if iconName then Compkiller:_ControlIcon(BlockText, iconName); end;
     Compkiller:_BindControlLabel(GlobalBlock, BlockText, function(scale)
         return Compkiller:_InlineControlWidth(LinkValues, UIListLayout, scale)
-    end, {Triggers = {{UIListLayout, "AbsoluteContentSize"}}})
+    end, {Icon = iconName, Triggers = {{UIListLayout, "AbsoluteContentSize"}}})
 	return rep;
 end;
 
@@ -3643,6 +3890,11 @@ function Compkiller:_AddColorPickerPanel(Button: ImageButton , Callback: (Color:
 		if not Compkiller:_IsMouseOverFrame(ColorPickerWindow) then
 			ToggleUI(false);
 		end;
+	end, ColorPickerWindow);
+
+	ColorPickerWindow.Destroying:Connect(function()
+		Args.IsHold = false;
+		if SPAWN_THREAD then pcall(task.cancel, SPAWN_THREAD); SPAWN_THREAD = nil; end;
 	end);
 
 	TextLabel.FocusLost:Connect(function()
@@ -3661,7 +3913,8 @@ function Compkiller:_AddColorPickerPanel(Button: ImageButton , Callback: (Color:
 		if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
 			Args.IsHold = true;
 
-			while (UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) or Args.IsHold) do task.wait()
+			while ColorPickerWindow.Parent and (UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) or Args.IsHold) do task.wait()
+				if not ColorPickerWindow.Parent then break end;
 				local ColorY = ColorRedGreenBlue.AbsolutePosition.Y
 				local ColorYM = ColorY + ColorRedGreenBlue.AbsoluteSize.Y;
 				local Value = math.clamp(Mouse.Y, ColorY, ColorYM)
@@ -3678,7 +3931,8 @@ function Compkiller:_AddColorPickerPanel(Button: ImageButton , Callback: (Color:
 		if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
 			Args.IsHold = true;
 
-			while (UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) or Args.IsHold) do task.wait()
+			while ColorPickerWindow.Parent and (UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) or Args.IsHold) do task.wait()
+				if not ColorPickerWindow.Parent then break end;
 				local transparency = math.clamp((((Mouse.X) - ColorOpc.AbsolutePosition.X) / ColorOpc.AbsoluteSize.X), 0, 1);
 				local RealColor = Color3.fromHSV(H , S , V);
 
@@ -3695,7 +3949,8 @@ function Compkiller:_AddColorPickerPanel(Button: ImageButton , Callback: (Color:
 		if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
 			Args.IsHold = true;
 
-			while (UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) or Args.IsHold) do task.wait();
+			while ColorPickerWindow.Parent and (UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) or Args.IsHold) do task.wait()
+				if not ColorPickerWindow.Parent then break end;
 				local PosX = ColorPickBox.AbsolutePosition.X
 				local ScaleX = PosX + ColorPickBox.AbsoluteSize.X
 				local Value, PosY = math.clamp(Mouse.X, PosX, ScaleX), ColorPickBox.AbsolutePosition.Y
@@ -4098,7 +4353,7 @@ function Compkiller:_LoadOption(Value , TabSignal)
 			if Toggl and not Compkiller:_IsMouseOverFrame(ExtractElement) and not Compkiller:_IsMouseOverFrame(Element) then
 				ToggleUI(false);
 			end;
-		end);
+		end, ExtractElement);
 
 		return Compkiller:_LoadElement(Elements , true , Signal)
 	end;
@@ -4391,7 +4646,7 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any, 
 	UIStroke.Color = Compkiller.Colors.StrokeColor
 	UIStroke.Parent = DropdownWindow
 
-	table.insert(Compkiller.Elements.StrokeColor , {
+	Compkiller:_BindColor(Compkiller.Elements.StrokeColor , {
 		Element = UIStroke,
 		Property = "Color"
 	})
@@ -4411,7 +4666,7 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any, 
 	SearchBox.TextSize = 15
 	SearchBox.ZIndex = BaseZ_Index + 5
 
-	table.insert(Compkiller.Elements.SwitchColor, {
+	Compkiller:_BindColor(Compkiller.Elements.SwitchColor, {
 		Element = SearchBox,
 		Property = "TextColor3"
 	})
@@ -4615,7 +4870,7 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any, 
 		BlockText.TextTransparency = 0.120
 		BlockText.TextXAlignment = Enum.TextXAlignment.Left
 
-		table.insert(Compkiller.Elements.SwitchColor , {
+		Compkiller:_BindColor(Compkiller.Elements.SwitchColor , {
 			Element = BlockText,
 			Property = 'TextColor3'
 		});
@@ -4631,7 +4886,7 @@ function Compkiller:_LoadDropdown(BaseParent: TextButton , Callback: () -> any, 
 		BlockLine.Size = UDim2.new(1, -6, 0, 1)
 		BlockLine.ZIndex = BaseZ_Index + 7
 
-		table.insert(Compkiller.Elements.LineColor,{
+		Compkiller:_BindColor(Compkiller.Elements.LineColor,{
 			Element = BlockLine,
 			Property = "BackgroundColor3"
 		});
@@ -4948,7 +5203,7 @@ function Compkiller:_LoadImageDropdown(BaseParent: TextButton, Callback: () -> a
 
 	UIStroke.Color  = Compkiller.Colors.StrokeColor;
 	UIStroke.Parent = DropdownWindow;
-	table.insert(Compkiller.Elements.StrokeColor,{Element=UIStroke,Property="Color"});
+	Compkiller:_BindColor(Compkiller.Elements.StrokeColor,{Element=UIStroke,Property="Color"});
 
 	UICorner.CornerRadius = UDim.new(0,6);
 	UICorner.Parent       = DropdownWindow;
@@ -5080,7 +5335,7 @@ function Compkiller:_LoadImageDropdown(BaseParent: TextButton, Callback: () -> a
 		Label.TextTransparency     = 0.25;
 		Label.TextXAlignment       = Enum.TextXAlignment.Left;
 		Label.TextTruncate         = Enum.TextTruncate.AtEnd;
-		table.insert(Compkiller.Elements.SwitchColor,{Element=Label,Property='TextColor3'});
+		Compkiller:_BindColor(Compkiller.Elements.SwitchColor,{Element=Label,Property='TextColor3'});
 
 		Divider.Name                 = Compkiller:_RandomString();
 		Divider.Parent               = Row;
@@ -5091,7 +5346,7 @@ function Compkiller:_LoadImageDropdown(BaseParent: TextButton, Callback: () -> a
 		Divider.Position             = UDim2.new(0.5,0,1,0);
 		Divider.Size                 = UDim2.new(1,-6,0,1);
 		Divider.ZIndex               = BaseZ_Index + 7;
-		table.insert(Compkiller.Elements.LineColor,{Element=Divider,Property="BackgroundColor3"});
+		Compkiller:_BindColor(Compkiller.Elements.LineColor,{Element=Divider,Property="BackgroundColor3"});
 
 		return {Row=Row, Thumb=Thumb, Label=Label, Divider=Divider, UIStroke=UIStroke};
 	end;
@@ -5235,8 +5490,9 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 			Risky = false,
 			Callback = function() end;
 		});
+        Config.Icon = Config.Icon or (Compkiller.ActionIcons or {})[Config.Name];
 
-		local Block = Compkiller:_CreateBlock(Signal);
+		local Block = Compkiller:_CreateBlock(Signal, Config.Icon);
 
 		Block:SetParent(Parent);
 		Block.Root.Visible = Config.Visible ~= false;
@@ -5478,6 +5734,7 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 			Callback = function() end,
 			Color = nil
 		});
+        Config.Icon = Config.Icon or (Compkiller.ActionIcons or {})[Config.Name];
 
 		local RunCallback, IsBusy = Compkiller:_GuardButtonCallback(Config.Callback, Config);
 
@@ -5523,7 +5780,7 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 		Frame.BorderColor3 = Color3.fromRGB(0, 0, 0)
 		Frame.BorderSizePixel = 0
 		Frame.Position = UDim2.new(0.5, 0, 0.5, 0)
-		Frame.Size = UDim2.new(1, -15, 1, -5)
+		Frame.Size = UDim2.new(1, -24, 1, -5)
 		Frame.ZIndex = Zindex + 7;
 
 		table.insert(Compkiller.Elements.BGDBColor,{
@@ -5561,6 +5818,7 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 			Property = 'TextColor3'
 		});
 
+		local actionIcon;
 		local isHovering = false
 		local isPressing = false
 		
@@ -5733,6 +5991,7 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 
 		function Args:SetText(t)
 			Config.Name = t;
+            if actionIcon then Compkiller:_SetIcon(actionIcon, (Compkiller.ActionIcons or {})[t] or Config.Icon); end;
 			if _targetLoc then
 				local key = tostring(_targetLoc) .. "|" .. t
 				if _translationCache[key] then
@@ -5751,7 +6010,8 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 			end
 		end;
 
-        Compkiller:_BindControlLabel(Button, TextLabel, nil, {Padding = 32, ParentInset = 15})
+        if Config.Icon then actionIcon = Compkiller:_ControlIcon(TextLabel, Config.Icon, true); end;
+        Compkiller:_BindControlLabel(Button, TextLabel, nil, {Padding = 32, ParentInset = 24, Icon = Config.Icon})
 		return Args;
 	end;
 
@@ -5937,7 +6197,6 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 		local UICorner_2 = Instance.new("UICorner")
 		local Frame = Instance.new("Frame")
 		local UICorner_3 = Instance.new("UICorner")
-		local UIScale = Instance.new("UIScale")
 		local ValueText = Instance.new("TextBox")
 
 		Compkiller:_AddDragBlacklist(Slider);
@@ -5947,7 +6206,7 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 		Slider.BackgroundTransparency = 1.000
 		Slider.BorderColor3 = Color3.fromRGB(0, 0, 0)
 		Slider.BorderSizePixel = 0
-		Slider.Size = UDim2.new(1, -1, 0, 45)
+		Slider.Size = UDim2.new(1, -1, 0, 49)
 		Slider.ZIndex = Zindex + 1
 
 		BlockText.Name = Compkiller:_RandomString()
@@ -5993,9 +6252,9 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 		SliderBar.BackgroundColor3 = Compkiller.Colors.DropColor
 		SliderBar.BorderColor3 = Color3.fromRGB(0, 0, 0)
 		SliderBar.BorderSizePixel = 0
-		SliderBar.ClipsDescendants = true
+		SliderBar.ClipsDescendants = false
 		SliderBar.Position = UDim2.new(0.5, 0, 1, -9)
-		SliderBar.Size = UDim2.new(1, -25, 0, 10)
+		SliderBar.Size = UDim2.new(1, -24, 0, 10)
 		SliderBar.ZIndex = Zindex + 3
 
 		table.insert(Compkiller.Elements.DropColor , {
@@ -6041,15 +6300,13 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 		UICorner_2.CornerRadius = UDim.new(0, 6)
 		UICorner_2.Parent = SliderInput
 
-		Frame.Parent = SliderInput
-		Frame.AnchorPoint = Vector2.new(1, 0.5)
+		Frame.Parent = SliderBar
+		Frame.AnchorPoint = Vector2.new(0.5, 0.5)
 		Frame.BackgroundColor3 = Compkiller.Colors.SwitchColor
 		Frame.BorderColor3 = Color3.fromRGB(0, 0, 0)
 		Frame.BorderSizePixel = 0
-		Frame.Position = UDim2.new(1, 5, 0.5, 0)
-		Frame.Rotation = 45.000
-		Frame.Size = UDim2.new(1, 0, 1, 0)
-		Frame.SizeConstraint = Enum.SizeConstraint.RelativeYY
+		Frame.Position = UDim2.new(0, 6, 0.5, 0)
+		Frame.Size = UDim2.fromOffset(12, 12)
 		Frame.ZIndex = Zindex + 6
 
 		table.insert(Compkiller.Elements.SwitchColor , {
@@ -6060,8 +6317,13 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 		UICorner_3.CornerRadius = UDim.new(3, 0)
 		UICorner_3.Parent = Frame
 
-		UIScale.Parent = Frame
-		UIScale.Scale = 1.300
+        -- The thumb stays fully inside both endpoints, independently of fill.
+        local function syncKnob()
+            local fraction = SliderInput.Size.X.Scale
+            Frame.Position = UDim2.new(fraction,6-12*fraction,0.5,0)
+        end
+        SliderInput:GetPropertyChangedSignal("Size"):Connect(syncKnob)
+        syncKnob()
 
 		ValueText.Name = Compkiller:_RandomString()
 		ValueText.Parent = Slider
@@ -6069,8 +6331,9 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 		ValueText.BackgroundTransparency = 0
 		ValueText.BorderColor3 = Color3.fromRGB(0, 0, 0)
 		ValueText.BorderSizePixel = 0
-		ValueText.Position = UDim2.new(1, -55, 0, 4)
-		ValueText.Size = UDim2.new(0, 45, 0, 18)
+		ValueText.AnchorPoint = Vector2.new(1, 0.5)
+		ValueText.Position = UDim2.new(1, -12, 0, 13.5)
+		ValueText.Size = UDim2.new(0, 44, 0, 22)
 		
 		ValueText:GetPropertyChangedSignal("Text"):Connect(function()
 			local raw = ValueText.Text
@@ -6121,6 +6384,16 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 			Property = 'BackgroundColor3'
 		});
 
+        local function sizeValueField()
+            local width = Slider.AbsoluteSize.X / Compkiller:_GetUIScale(Slider)
+            if width <= 0 then return end
+            local size = Compkiller:_ControlFieldSize(ValueText,44,width*0.5)
+            if ValueText.Size ~= size then ValueText.Size = size end
+        end
+        ValueText:GetPropertyChangedSignal("Text"):Connect(sizeValueField)
+        Slider:GetPropertyChangedSignal("AbsoluteSize"):Connect(sizeValueField)
+        sizeValueField()
+
 		Compkiller:_Hover(SliderBar,function()
 			if Signal:GetValue() then
 				Compkiller:_Animation(ValueText,TweenInfo.new(0.2),{
@@ -6138,7 +6411,9 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 		local IsHold = false;
 
 		local Update = function(Input)
-			local SizeScale = math.clamp((((Input.Position.X) - SliderBar.AbsolutePosition.X) / SliderBar.AbsoluteSize.X), 0, 1);
+            local inset = 6 * Compkiller:_GetUIScale(SliderBar)
+            local SizeScale = math.clamp((Input.Position.X-SliderBar.AbsolutePosition.X-inset)
+                / math.max(1,SliderBar.AbsoluteSize.X-2*inset),0,1);
 
 			local Main = (Config.Max <= Config.Min and Config.Min) or (((Config.Max - Config.Min) * SizeScale) + Config.Min);
 
@@ -6208,7 +6483,7 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 						Update(Input)
 					end;
 				end;
-			end);
+			end, SliderBar);
 		end;
 
 		local Args = {};
@@ -7073,12 +7348,12 @@ return Args;
 
 		LinkValues.Name = Compkiller:_RandomString()
 		LinkValues.Parent = TextBox
-		LinkValues.AnchorPoint = Vector2.new(1, 0.540000021)
+		LinkValues.AnchorPoint = Vector2.new(1, 0.5)
 		LinkValues.BackgroundColor3 = Compkiller.Colors.DropColor
 		LinkValues.BorderColor3 = Color3.fromRGB(0, 0, 0)
 		LinkValues.BorderSizePixel = 0
 		LinkValues.Position = UDim2.new(1, -12, 0.5, 0)
-		LinkValues.Size = UDim2.new(0, 95, 0, 16)
+		LinkValues.Size = UDim2.new(0, 95, 0, 22)
 		LinkValues.ZIndex = Zindex + 3
 
 		table.insert(Compkiller.Elements.DropColor,{
@@ -7106,7 +7381,7 @@ return Args;
 		TextBox_2.ClipsDescendants = true -- prevent long text overflow
 		TextBox_2.TextTruncate = Enum.TextTruncate.AtEnd
 		TextBox_2.Position = UDim2.new(0.5, 0, 0.5, 0)
-		TextBox_2.Size = UDim2.new(1, -5, 1, 0)
+		TextBox_2.Size = UDim2.new(1, -16, 1, 0)
 		TextBox_2.ZIndex = Zindex + 5
 		TextBox_2.ClearTextOnFocus = false
 		TextBox_2.Font = Enum.Font.GothamMedium
@@ -7138,14 +7413,10 @@ return Args;
 		})
 
 		local Update = function()
-			local scale = TextService:GetTextSize(TextBox_2.Text,TextBox_2.TextSize,TextBox_2.Font,Vector2.new(math.huge,math.huge));
-			local Base = TextService:GetTextSize(TextBox_2.PlaceholderText,TextBox_2.TextSize,TextBox_2.Font,Vector2.new(math.huge,math.huge));
-
-			local MainScale = ((scale.X > Base.X) and scale.X) or Base.X;
-
-			Compkiller:_Animation(LinkValues,TweenInfo.new(0.25),{
-				Size = UDim2.fromOffset(math.clamp(MainScale + 7 , Base.X , TextBox.AbsoluteSize.X / 2) , 16)
-			})
+            local width = TextBox.AbsoluteSize.X / Compkiller:_GetUIScale(TextBox)
+            if width <= 0 then return end
+            local size = Compkiller:_ControlFieldSize(TextBox_2,28,width*0.5)
+            if LinkValues.Size ~= size then LinkValues.Size = size end
 		end;
 
 		local parse = function(text)
@@ -7169,6 +7440,7 @@ return Args;
 		Update();
 
 		TextBox_2:GetPropertyChangedSignal('Text'):Connect(Update);
+        TextBox:GetPropertyChangedSignal('AbsoluteSize'):Connect(Update);
 
 		TextBox_2:GetPropertyChangedSignal('Text'):Connect(function()
 			local value = parse(TextBox_2.Text);
@@ -7261,6 +7533,7 @@ return Args;
 			ActionButton2 = nil,
 			Upwards = false
 		});
+        Config.Icon = Config.Icon or (Compkiller.ActionIcons or {})[Config.Name];
 
 		local DaTabarser = function(value)
 			if not value then return ''; end;
@@ -7479,12 +7752,12 @@ return Args;
 
 		LinkValues.Name = Compkiller:_RandomString()
 		LinkValues.Parent = Dropdown
-		LinkValues.AnchorPoint = Vector2.new(1, 0.540000021)
+		LinkValues.AnchorPoint = Vector2.new(1, 0.5)
 		LinkValues.BackgroundTransparency = 1.000
 		LinkValues.BorderColor3 = Color3.fromRGB(0, 0, 0)
 		LinkValues.BorderSizePixel = 0
-		LinkValues.Position = UDim2.new(1, -12, 0, 15)
-		LinkValues.Size = UDim2.new(1, 0, 0, 18)
+		LinkValues.Position = UDim2.new(1, -12, 0, 13.5)
+		LinkValues.Size = UDim2.new(1, 0, 0, 22)
 		LinkValues.ZIndex = Zindex + 3
 
 		UIListLayout.Parent = LinkValues
@@ -7502,7 +7775,7 @@ return Args;
 		ValueItems.BorderSizePixel = 0
 		ValueItems.ClipsDescendants = true
 		ValueItems.Position = UDim2.new(0.5, 0, 1, -7)
-		ValueItems.Size = UDim2.new(1, -25, 0, 22)
+		ValueItems.Size = UDim2.new(1, -24, 0, 22)
 		ValueItems.ZIndex = Zindex + 5
 
 		table.insert(Compkiller.Elements.BGDBColor , {
@@ -7523,18 +7796,19 @@ return Args;
 
 		ValueText.Name = Compkiller:_RandomString()
 		ValueText.Parent = ValueItems
-		ValueText.AnchorPoint = Vector2.new(0.5, 0.5)
+		ValueText.AnchorPoint = Vector2.new(0, 0.5)
 		ValueText.BackgroundTransparency = 1.000
 		ValueText.BorderColor3 = Color3.fromRGB(0, 0, 0)
 		ValueText.BorderSizePixel = 0
-		ValueText.Position = UDim2.new(0.5, 0, 0.5, 0)
-		ValueText.Size = UDim2.new(1, -10, 0, 20)
+		ValueText.Position = UDim2.new(0, 8, 0.5, 0)
+		ValueText.Size = UDim2.new(1, -34, 0, 20)
 		ValueText.ZIndex = Zindex + 8
 		ValueText.Font = Enum.Font.GothamMedium
 		ValueText.Text = DaTabarser(Config.Default)
 		ValueText.TextColor3 = Compkiller.Colors.SwitchColor
 		ValueText.TextSize = 15
 		ValueText.TextXAlignment = Enum.TextXAlignment.Left
+		ValueText.TextTruncate = Enum.TextTruncate.AtEnd
 
 		table.insert(Compkiller.Elements.SwitchColor , {
 			Element = ValueText,
@@ -7547,10 +7821,10 @@ return Args;
 		MainButton.BackgroundTransparency = 1.000
 		MainButton.BorderColor3 = Color3.fromRGB(0, 0, 0)
 		MainButton.BorderSizePixel = 0
-		MainButton.Position = UDim2.new(1, -5, 0.5, 0)
+		MainButton.Position = UDim2.new(1, -8, 0.5, 0)
 		MainButton.Size = UDim2.new(0, 13, 0, 13)
 		MainButton.ZIndex = Zindex + 5
-		MainButton.Image = "rbxassetid://10709790948"
+		Compkiller:_SetIcon(MainButton,"chevron-down")
 
 		local isHovering = false
 		local isPressing = false
@@ -7757,12 +8031,13 @@ return Args;
 			Compkiller.Flags[Config.Flag] = Args;
 		end;
 
+        if Config.Icon then Compkiller:_ControlIcon(BlockText, Config.Icon); end;
         local labelTriggers = {{UIListLayout, "AbsoluteContentSize"}}
         if actionButton2 then table.insert(labelTriggers, {actionButton2, "Visible"}) end
         Compkiller:_BindControlLabel(Dropdown, BlockText, function(scale)
             local actionWidth = (Config.ActionButton or (actionButton2 and actionButton2.Visible)) and 65 or 0
             return math.max(Compkiller:_InlineControlWidth(LinkValues, UIListLayout, scale), actionWidth)
-        end, {Triggers = labelTriggers})
+        end, {Icon = Config.Icon, Triggers = labelTriggers})
 		return Args;
 	end;
 
@@ -7840,11 +8115,11 @@ return Args;
 
 		LinkValues.Name               = Compkiller:_RandomString();
 		LinkValues.Parent             = Dropdown;
-		LinkValues.AnchorPoint        = Vector2.new(1,0.54);
+		LinkValues.AnchorPoint        = Vector2.new(1,0.5);
 		LinkValues.BackgroundTransparency = 1;
 		LinkValues.BorderSizePixel    = 0;
-		LinkValues.Position           = UDim2.new(1,-12,0,15);
-		LinkValues.Size               = UDim2.new(1,0,0,18);
+		LinkValues.Position           = UDim2.new(1,-12,0,13.5);
+		LinkValues.Size               = UDim2.new(1,0,0,22);
 		LinkValues.ZIndex             = Zindex + 3;
 		LLLayout.Parent              = LinkValues;
 		LLLayout.FillDirection       = Enum.FillDirection.Horizontal;
@@ -7860,7 +8135,7 @@ return Args;
 		ValueItems.BorderSizePixel    = 0;
 		ValueItems.ClipsDescendants   = true;
 		ValueItems.Position           = UDim2.new(0.5,0,1,-7);
-		ValueItems.Size               = UDim2.new(1,-25,0,22);
+		ValueItems.Size               = UDim2.new(1,-24,0,22);
 		ValueItems.ZIndex             = Zindex + 5;
 		table.insert(Compkiller.Elements.BGDBColor,{Element=ValueItems,Property="BackgroundColor3"});
 
@@ -7876,7 +8151,7 @@ return Args;
 		ThumbImg.AnchorPoint           = Vector2.new(0,0.5);
 		ThumbImg.BackgroundTransparency = 1;
 		ThumbImg.BorderSizePixel       = 0;
-		ThumbImg.Position              = UDim2.new(0,4,0.5,0);
+		ThumbImg.Position              = UDim2.new(0,8,0.5,0);
 		ThumbImg.Size                  = UDim2.new(0,13,0,13);
 		ThumbImg.ZIndex                = Zindex + 8;
 		ThumbImg.ScaleType             = Enum.ScaleType.Fit;
@@ -7887,8 +8162,8 @@ return Args;
 		ValueText.AnchorPoint          = Vector2.new(0,0.5);
 		ValueText.BackgroundTransparency = 1;
 		ValueText.BorderSizePixel      = 0;
-		ValueText.Position             = UDim2.new(0,21,0.5,0);
-		ValueText.Size                 = UDim2.new(1,-38,0,20);
+		ValueText.Position             = UDim2.new(0,26,0.5,0);
+		ValueText.Size                 = UDim2.new(1,-52,0,20);
 		ValueText.ZIndex               = Zindex + 8;
 		ValueText.Font                 = Enum.Font.GothamMedium;
 		ValueText.Text                 = SelectedName();
@@ -7903,7 +8178,7 @@ return Args;
 		ChevronBtn.AnchorPoint         = Vector2.new(1,0.5);
 		ChevronBtn.BackgroundTransparency = 1;
 		ChevronBtn.BorderSizePixel     = 0;
-		ChevronBtn.Position            = UDim2.new(1,-4,0.5,0);
+		ChevronBtn.Position            = UDim2.new(1,-8,0.5,0);
 		ChevronBtn.Size                = UDim2.new(0,13,0,13);
 		ChevronBtn.ZIndex              = Zindex + 5;
 		ChevronBtn.Image               = "rbxassetid://10709790948";
@@ -9086,7 +9361,7 @@ function Compkiller.new(Config : Window)
 		Icon.Position = UDim2.new(0, 15, 0.5, 0)
 		Icon.Size = UDim2.new(0, 22, 0, 22)
 		Icon.ZIndex = 3
-		Icon.Image = Compkiller:_GetIcon(TabConfig.Icon);
+		Compkiller:_SetIcon(Icon, TabConfig.Icon);
 		Icon.ImageColor3 = Compkiller.Colors.Highlight
 
 		table.insert(Compkiller.Elements.Highlight,{
@@ -9593,7 +9868,7 @@ function Compkiller.new(Config : Window)
 		Icon.Position = UDim2.new(0, 15, 0.5, 0)
 		Icon.Size = UDim2.new(0, 22, 0, 22)
 		Icon.ZIndex = 3
-		Icon.Image = Compkiller:_GetIcon(Configuration.Icon);
+		Compkiller:_SetIcon(Icon,Configuration.Icon);
 		Icon.ImageColor3 = Compkiller.Colors.Highlight
 
 		table.insert(Compkiller.Elements.Highlight,{
@@ -9737,7 +10012,7 @@ function Compkiller.new(Config : Window)
 		SectionClose.Position = UDim2.new(1, -12, 0.5, 0)
 		SectionClose.Size = UDim2.new(0, 17, 0, 17)
 		SectionClose.ZIndex = 10
-		SectionClose.Image = "rbxassetid://10709790948"
+		Compkiller:_SetIcon(SectionClose,"chevron-down")
 		SectionClose.ImageTransparency = 0.500
 
 		ScrollingFrame.Parent = ConfigList
@@ -9827,7 +10102,7 @@ function Compkiller.new(Config : Window)
 		SectionClose_2.Position = UDim2.new(1, -12, 0.5, 0)
 		SectionClose_2.Size = UDim2.new(0, 17, 0, 17)
 		SectionClose_2.ZIndex = 10
-		SectionClose_2.Image = "rbxassetid://10709790948"
+		Compkiller:_SetIcon(SectionClose_2,"chevron-down")
 		SectionClose_2.ImageTransparency = 0.500
 
 		Frame.Parent = AddConfig
@@ -10239,7 +10514,7 @@ function Compkiller.new(Config : Window)
 			DelButton.LayoutOrder = -9999
 			DelButton.Size = UDim2.new(0, 35, 0, 15)
 			DelButton.ZIndex = 14
-			DelButton.Image = "rbxassetid://10747362393"
+			Compkiller:_SetIcon(DelButton,"trash-2")
 			DelButton.ImageColor3 = Color3.fromRGB(255, 107, 107)
 			DelButton.ImageTransparency = 0.500
 			DelButton.ScaleType = Enum.ScaleType.Fit
@@ -10276,7 +10551,7 @@ function Compkiller.new(Config : Window)
 			ConfigText.TextTransparency = 1
 			ConfigText.TextXAlignment = Enum.TextXAlignment.Left
 
-			table.insert(Compkiller.Elements.SwitchColor , {
+			Compkiller:_BindColor(Compkiller.Elements.SwitchColor , {
 				Element = ConfigText,
 				Property = 'TextColor3'
 			});
@@ -10319,7 +10594,7 @@ function Compkiller.new(Config : Window)
 			Frame.Size = UDim2.new(1, -15, 1, -5)
 			Frame.ZIndex = 14
 
-			table.insert(Compkiller.Elements.Highlight,{
+			Compkiller:_BindColor(Compkiller.Elements.Highlight,{
 				Element = Frame,
 				Property = "BackgroundColor3"
 			});
@@ -10328,7 +10603,7 @@ function Compkiller.new(Config : Window)
 			UIStroke.Color = Compkiller.Colors.StrokeColor
 			UIStroke.Parent = Frame
 
-			table.insert(Compkiller.Elements.StrokeColor,{
+			Compkiller:_BindColor(Compkiller.Elements.StrokeColor,{
 				Element = UIStroke,
 				Property = "Color"
 			});
@@ -10352,7 +10627,7 @@ function Compkiller.new(Config : Window)
 			TextLabel.TextXAlignment = Enum.TextXAlignment.Left
 			TextLabel.TextTransparency = 1
 
-			table.insert(Compkiller.Elements.SwitchColor , {
+			Compkiller:_BindColor(Compkiller.Elements.SwitchColor , {
 				Element = TextLabel,
 				Property = 'TextColor3'
 			});
@@ -10367,7 +10642,7 @@ function Compkiller.new(Config : Window)
 			Icon.Size = UDim2.new(0.699999988, 0, 0.699999988, 0)
 			Icon.SizeConstraint = Enum.SizeConstraint.RelativeYY
 			Icon.ZIndex = 15
-			Icon.Image = "rbxassetid://10734941499"
+			Compkiller:_SetIcon(Icon,"save")
 			Icon.ImageTransparency = 1;
 
 			LoadButton.Name = Compkiller:_RandomString()
@@ -10388,7 +10663,7 @@ function Compkiller.new(Config : Window)
 			Frame_2.Size = UDim2.new(1, -15, 1, -5)
 			Frame_2.ZIndex = 14
 
-			table.insert(Compkiller.Elements.Highlight,{
+			Compkiller:_BindColor(Compkiller.Elements.Highlight,{
 				Element = Frame_2,
 				Property = "BackgroundColor3"
 			});
@@ -10397,7 +10672,7 @@ function Compkiller.new(Config : Window)
 			UIStroke_2.Color = Compkiller.Colors.StrokeColor
 			UIStroke_2.Parent = Frame_2
 
-			table.insert(Compkiller.Elements.StrokeColor,{
+			Compkiller:_BindColor(Compkiller.Elements.StrokeColor,{
 				Element = UIStroke_2,
 				Property = "Color"
 			});
@@ -10421,7 +10696,7 @@ function Compkiller.new(Config : Window)
 			TextLabel_2.TextXAlignment = Enum.TextXAlignment.Left
 			TextLabel_2.TextTransparency = 1
 
-			table.insert(Compkiller.Elements.SwitchColor , {
+			Compkiller:_BindColor(Compkiller.Elements.SwitchColor , {
 				Element = TextLabel_2,
 				Property = 'TextColor3'
 			});
@@ -10436,14 +10711,14 @@ function Compkiller.new(Config : Window)
 			Icon_2.Size = UDim2.new(0.699999988, 0, 0.699999988, 0)
 			Icon_2.SizeConstraint = Enum.SizeConstraint.RelativeYY
 			Icon_2.ZIndex = 15
-			Icon_2.Image = "rbxassetid://10723344270"
+			Compkiller:_SetIcon(Icon_2,"folder-open")
 			Icon_2.ImageTransparency = 1
 			UIStroke_3.Transparency = 1
 
 			UIStroke_3.Color = Compkiller.Colors.StrokeColor
 			UIStroke_3.Parent = ConfigBlock
 
-			table.insert(Compkiller.Elements.StrokeColor,{
+			Compkiller:_BindColor(Compkiller.Elements.StrokeColor,{
 				Element = UIStroke_3,
 				Property = "Color"
 			});
@@ -10468,7 +10743,7 @@ function Compkiller.new(Config : Window)
 			AuthorText.TextTransparency = 1
 			AuthorText.TextXAlignment = Enum.TextXAlignment.Left
 
-			table.insert(Compkiller.Elements.SwitchColor , {
+			Compkiller:_BindColor(Compkiller.Elements.SwitchColor , {
 				Element = TabNameLabel,
 				Property = 'TextColor3'
 			});
@@ -10486,7 +10761,7 @@ function Compkiller.new(Config : Window)
             AutoLabel.TextXAlignment = Enum.TextXAlignment.Left
             AutoLabel.TextColor3 = Compkiller.Colors.SwitchColor
             AutoLabel.ZIndex = 14
-            table.insert(Compkiller.Elements.SwitchColor, {Element = AutoLabel, Property = "TextColor3"})
+            Compkiller:_BindColor(Compkiller.Elements.SwitchColor, {Element = AutoLabel, Property = "TextColor3"})
             local AutoToggle = Instance.new("TextButton")
             AutoToggle.Name = "AutoLoadToggle"
             AutoToggle.Parent = ConfigBlock
@@ -10505,7 +10780,7 @@ function Compkiller.new(Config : Window)
             AutoKnob.BackgroundColor3 = Compkiller.Colors.SwitchColor
             AutoKnob.ZIndex = 16
             Instance.new("UICorner", AutoKnob).CornerRadius = UDim.new(1, 0)
-            table.insert(Compkiller.Elements.SwitchColor, {Element = AutoKnob, Property = "BackgroundColor3"})
+            Compkiller:_BindColor(Compkiller.Elements.SwitchColor, {Element = AutoKnob, Property = "BackgroundColor3"})
             function ConfigButton:SetAutoLoad(enabled)
                 self.AutoLoad = enabled == true
                 AutoToggle.BackgroundColor3 = self.AutoLoad and Compkiller.Colors.Highlight or Compkiller.Colors.DropColor
@@ -10932,7 +11207,7 @@ function Compkiller.new(Config : Window)
 			Icon.Position = UDim2.new(0, 15, 0.5, 0)
 			Icon.Size = UDim2.new(0, 22, 0, 22)
 			Icon.ZIndex = 3
-			Icon.Image = Compkiller:_GetIcon(TabConfig.Icon);
+			Compkiller:_SetIcon(Icon, TabConfig.Icon);
 			Icon.ImageColor3 = Compkiller.Colors.Highlight
 
 			table.insert(Compkiller.Elements.Highlight,{
@@ -11369,7 +11644,7 @@ function Compkiller.new(Config : Window)
 			SectionClose.Position = UDim2.new(1, -12, 0.5, 0)
 			SectionClose.Size = UDim2.new(0, 17, 0, 17)
 			SectionClose.ZIndex = 10
-			SectionClose.Image = "rbxassetid://10709790948"
+			Compkiller:_SetIcon(SectionClose,"chevron-down")
 			SectionClose.ImageTransparency = 0.500
 
 			if not SectionText.Text:byte() then
@@ -11649,7 +11924,7 @@ function Compkiller.new(Config : Window)
 			WaternarkList.BorderColor3 = Color3.fromRGB(0, 0, 0)
 			WaternarkList.BorderSizePixel = 0
 			WaternarkList.Position = UDim2.new(0.5, 0, 0, 0)
-			WaternarkList.Size = UDim2.new(1, -10, 1, 0)
+			WaternarkList.Size = UDim2.new(1, -16, 1, 0)
 			WaternarkList.ZIndex = 155
 			WaternarkList.ClipsDescendants = true
 
@@ -11679,7 +11954,7 @@ function Compkiller.new(Config : Window)
 
 			local LastWidth = 45;
 			UIListLayout:GetPropertyChangedSignal('AbsoluteContentSize'):Connect(function()
-				local Width = math.max(45, math.ceil(UIListLayout.AbsoluteContentSize.X + 8));
+				local Width = math.max(45, math.ceil(UIListLayout.AbsoluteContentSize.X + 16));
 				if Width == LastWidth then return; end;
 				LastWidth = Width;
 				Compkiller:_Animation(Watermark,TweenInfo.new(0.4),{
@@ -11715,7 +11990,7 @@ function Compkiller.new(Config : Window)
 				Icon.Size = UDim2.fromOffset(15,15)
 				Icon.SizeConstraint = Enum.SizeConstraint.RelativeYY
 				Icon.ZIndex = 156
-				Icon.Image = Compkiller:_GetIcon(Watermark.Icon);
+				Compkiller:_SetIcon(Icon, Watermark.Icon);
 				Icon.Visible = Watermark.ShowIcon ~= false;
 				Icon.ImageColor3 = Watermark.IconColor or Color3.new(1, 1, 1);
 
@@ -11726,6 +12001,7 @@ function Compkiller.new(Config : Window)
 				TextLabel.Size = UDim2.new(0, 50, 0.699999988, 0)
 				TextLabel.ZIndex = 156
 				TextLabel.Font = Watermark.Font or Enum.Font.GothamMedium
+				TextLabel.Visible = Watermark.ShowText ~= false;
 				TextLabel.Text = Watermark.Text
 				TextLabel.TextColor3 = Watermark.TextColor or Compkiller.Colors.SwitchColor
 				TextLabel.TextSize = Watermark.TextSize or 10
@@ -11770,9 +12046,13 @@ function Compkiller.new(Config : Window)
 					Update();
 				end;
 
+				function Arg:SetIconColor(color)
+					Icon.ImageColor3 = color;
+				end;
+
 				function Arg:Visible(v)
 					Icon.Visible = v and Watermark.ShowIcon ~= false;
-					TextLabel.Visible = v;
+					TextLabel.Visible = v and Watermark.ShowText ~= false;
 				end;
 
 				return Arg;
@@ -11782,6 +12062,7 @@ function Compkiller.new(Config : Window)
 		end;
 
 		function WindowArgs:Toggle(Value: boolean)
+			WindowArgs.IsOpen = Value;
             CompKiller:SetAttribute("ButterMenuOpen", Value);
             if not Value then Compkiller:_CloseWindowDropdowns(CompKiller); end;
 			if WindowArgs.PerformanceMode then
@@ -12497,7 +12778,7 @@ function Compkiller.newNotify()
 			CompLogo.Position = UDim2.new(0, 6, 0, 6)
 			CompLogo.Size = UDim2.new(0, 25, 0, 25)
 			CompLogo.ZIndex = 4
-			CompLogo.Image = Notify.Icon;
+			Compkiller:_SetIcon(CompLogo, Notify.Icon);
 
 			Header.Name = Compkiller:_RandomString()
 			Header.Parent = NotifyFrame
