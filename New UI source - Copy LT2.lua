@@ -125,6 +125,7 @@ export type MiniToggle = {
 };
 
 export type TextBoxConfig = {
+	Icon: string?,
 	Name: string,
 	Default: string,
 	Placeholder: string,
@@ -134,6 +135,7 @@ export type TextBoxConfig = {
 };
 
 export type ColorPicker = {
+	Icon: string?,
 	Name: string,
 	Default: Color3,
 	Flag: string | nil,
@@ -149,6 +151,7 @@ export type MiniColorPicker = {
 };
 
 export type Slider = {
+	Icon: string?,
 	Name: string,
 	Min: number,
 	Max: number,
@@ -179,6 +182,7 @@ export type Button = {
 };
 
 export type Keybind = {
+	Icon: string?,
 	Name: string,
 	Default: string | Enum.KeyCode,
 	Callback: (Value: string) -> any,
@@ -1678,6 +1682,44 @@ function Compkiller:_ControlIcon(label, name, centered)
     label.Position = centered and UDim2.new(0,32,0.5,0) or UDim2.new(0,36,label.Position.Y.Scale,label.Position.Y.Offset);
     label.AnchorPoint = Vector2.new(0, label.AnchorPoint.Y);
     label.TextXAlignment = Enum.TextXAlignment.Left;
+    return icon;
+end;
+
+
+-- Optional icon for compact text buttons; keep the original input target/callback.
+function Compkiller:_TextButtonIcon(button, name, iconOnly, cancelIcon)
+    if not name then return; end;
+    local icon = Instance.new("ImageLabel");
+    icon.Name, icon.BackgroundTransparency = "ButtonLucideIcon", 1;
+    icon.AnchorPoint, icon.Size = Vector2.new(0,0.5), UDim2.fromOffset(14,14);
+    icon.Parent = button.Parent;
+    if iconOnly then
+        button:SetAttribute("IconLabel",button.Text);
+        button.Text = "";
+    else
+        local padding = button:FindFirstChildOfClass("UIPadding") or Instance.new("UIPadding",button);
+        padding.PaddingLeft, padding.PaddingRight = UDim.new(0,24), UDim.new(0,4);
+    end;
+    local current;
+    local function sync()
+        local size, anchor, position = button.Size, button.AnchorPoint, button.Position;
+        icon.Position = position + UDim2.new(size.X.Scale * ((iconOnly and 0.5 or 0)-anchor.X),
+            size.X.Offset * ((iconOnly and 0.5 or 0)-anchor.X) + (iconOnly and -7 or 6),
+            size.Y.Scale * (0.5-anchor.Y), size.Y.Offset * (0.5-anchor.Y));
+        icon.ImageColor3, icon.ImageTransparency = button.TextColor3, button.TextTransparency;
+        icon.ZIndex, icon.Visible = button.ZIndex+1, button.Visible;
+        local desired = cancelIcon and button.Text == "Cancel" and "x" or name;
+        if current ~= desired then self:_SetIcon(icon,desired); current = desired; end;
+    end;
+    local connections = {};
+    for _, property in ipairs({"Position","Size","AnchorPoint","TextColor3","TextTransparency","ZIndex","Visible","Text"}) do
+        table.insert(connections,button:GetPropertyChangedSignal(property):Connect(sync));
+    end;
+    table.insert(connections,button.Destroying:Connect(function() icon:Destroy(); end));
+    icon.Destroying:Connect(function()
+        for _, connection in ipairs(connections) do connection:Disconnect(); end;
+    end);
+    sync();
     return icon;
 end;
 
@@ -5565,7 +5607,7 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 			Blacklist = {}
 		});
 
-		local Block = Compkiller:_CreateBlock(Signal);
+		local Block = Compkiller:_CreateBlock(Signal, Config.Icon);
 
 		Block:SetParent(Parent);
 
@@ -5664,7 +5706,7 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 			Callback = function() end;
 		});
 
-		local Block = Compkiller:_CreateBlock(Signal);
+		local Block = Compkiller:_CreateBlock(Signal, Config.Icon);
 
 		Block:SetParent(Parent);
 
@@ -6040,6 +6082,10 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 		TextLabel.TextColor3 = Compkiller.Colors.SwitchColor
 		TextLabel.TextSize = 14
 		TextLabel.TextStrokeTransparency = 0.900
+        if Config.Icons then
+            Compkiller:_ControlIcon(TextLabel,"move");
+            TextLabel.Size = UDim2.new(1,-44,0,20);
+        end;
 
 		table.insert(Compkiller.Elements.SwitchColor , {
 			Element = TextLabel,
@@ -6095,6 +6141,11 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 		    Compkiller:_BindClickRipple(b);
 		    b.MouseButton1Click:Connect(callback)
             
+            if Config.Icons then
+                local names = {U="arrow-up", D="arrow-down", L="arrow-left", R="arrow-right",
+                    F="arrow-up-right", B="arrow-down-left", RL="rotate-ccw", RR="rotate-cw", Reset="rotate-ccw"};
+                Compkiller:_TextButtonIcon(b, names[txt], txt ~= "Reset");
+            end;
             local Hovered = false;
             local function UpdateButton()
                 Compkiller:_Animation(b, TweenInfo.new(0.15), {
@@ -6606,8 +6657,9 @@ function Compkiller:_LoadElement(Parent: Frame , EnabledLine: boolean , Signal)
 			Compkiller.Flags[Config.Flag] = Args;
 		end;
 
+        if Config.Icon then Compkiller:_ControlIcon(BlockText, Config.Icon); end;
         Compkiller:_BindControlLabel(Slider, BlockText, function(scale) return ValueText.AbsoluteSize.X / scale end,
-            {Triggers = {{ValueText, "AbsoluteSize"}}})
+            {Icon = Config.Icon, Triggers = {{ValueText, "AbsoluteSize"}}})
 		return Args;
 	end;
 
@@ -7517,8 +7569,9 @@ return Args;
 			Compkiller.Flags[Config.Flag] = Args;
 		end;
 
+        if Config.Icon then Compkiller:_ControlIcon(BlockText, Config.Icon); end;
         Compkiller:_BindControlLabel(TextBox, BlockText, function(scale) return LinkValues.AbsoluteSize.X / scale end,
-            {Triggers = {{LinkValues, "AbsoluteSize"}}})
+            {Icon = Config.Icon, Triggers = {{LinkValues, "AbsoluteSize"}}})
 		return Args;
 	end;
 
@@ -7534,6 +7587,8 @@ return Args;
 			Upwards = false
 		});
         Config.Icon = Config.Icon or (Compkiller.ActionIcons or {})[Config.Name];
+        local actionWidth = ((Config.ActionButton and Config.ActionButton.Icon) or
+            (Config.ActionButton2 and Config.ActionButton2.Icon)) and 100 or 65;
 
 		local DaTabarser = function(value)
 			if not value then return ''; end;
@@ -7631,7 +7686,7 @@ return Args;
 			actionBtn.Parent = Dropdown
 			actionBtn.AnchorPoint = Vector2.new(1, 0)
 			actionBtn.Position = UDim2.new(1, -12, 0, 4)
-			actionBtn.Size = UDim2.new(0, 65, 0, 18)
+			actionBtn.Size = UDim2.new(0, actionWidth, 0, 18)
 			actionBtn.BackgroundColor3 = Config.ActionButton.Color or Compkiller.Colors.Toggle
 			if not Config.ActionButton.Color then Compkiller:_BindPolishColor(actionBtn, "BackgroundColor3", "Toggle"); end;
 			actionBtn.Text = Config.ActionButton.Text or "Action"
@@ -7640,6 +7695,7 @@ return Args;
 			actionBtn.TextSize = 13
 			actionBtn.ZIndex = Zindex + 5
 			
+			if Config.ActionButton.Icon then Compkiller:_TextButtonIcon(actionBtn, Config.ActionButton.Icon); end;
 			local btnCorner = Instance.new("UICorner")
 			btnCorner.CornerRadius = UDim.new(0, 4)
 			btnCorner.Parent = actionBtn
@@ -7648,7 +7704,7 @@ return Args;
 			popout.Name = Compkiller:_RandomString()
 			popout.Parent = Dropdown
 			popout.AnchorPoint = Vector2.new(1, 0.5)
-			popout.Position = UDim2.new(1, -85, 0, 13)
+			popout.Position = UDim2.new(1, -20-actionWidth, 0, 13)
 			popout.Size = UDim2.new(0, 140, 0, 24)
 			Compkiller:_BindPolishColor(popout, "BackgroundColor3", "DropColor");
 			popout.Visible = false
@@ -7725,7 +7781,7 @@ return Args;
 			else
 				actionBtn2.Position = UDim2.new(1, -12, 0, 4)
 			end
-			actionBtn2.Size = UDim2.new(0, 65, 0, 18)
+			actionBtn2.Size = UDim2.new(0, actionWidth, 0, 18)
 			actionBtn2.BackgroundColor3 = Config.ActionButton2.Color or Compkiller.Colors.DropColor
 			if not Config.ActionButton2.Color then Compkiller:_BindPolishColor(actionBtn2, "BackgroundColor3", "DropColor"); end;
 			actionBtn2.Text = Config.ActionButton2.Text or "Action 2"
@@ -7734,6 +7790,7 @@ return Args;
 			actionBtn2.TextSize = 13
 			actionBtn2.ZIndex = Zindex + 5
 			
+			if Config.ActionButton2.Icon then Compkiller:_TextButtonIcon(actionBtn2, Config.ActionButton2.Icon); end;
 			local btnCorner2 = Instance.new("UICorner")
 			btnCorner2.CornerRadius = UDim.new(0, 4)
 			btnCorner2.Parent = actionBtn2
@@ -7795,6 +7852,10 @@ return Args;
 		UICorner.Parent = ValueItems
 
 		ValueText.Name = Compkiller:_RandomString()
+		-- This is a display value, not a user input; keep its backing selection untouched.
+		ValueText:SetAttribute("ButterStreamerText", true)
+		ValueText.TextEditable = false
+		ValueText.ClearTextOnFocus = false
 		ValueText.Parent = ValueItems
 		ValueText.AnchorPoint = Vector2.new(0, 0.5)
 		ValueText.BackgroundTransparency = 1.000
@@ -8035,8 +8096,8 @@ return Args;
         local labelTriggers = {{UIListLayout, "AbsoluteContentSize"}}
         if actionButton2 then table.insert(labelTriggers, {actionButton2, "Visible"}) end
         Compkiller:_BindControlLabel(Dropdown, BlockText, function(scale)
-            local actionWidth = (Config.ActionButton or (actionButton2 and actionButton2.Visible)) and 65 or 0
-            return math.max(Compkiller:_InlineControlWidth(LinkValues, UIListLayout, scale), actionWidth)
+            local reservedActionWidth = (Config.ActionButton or (actionButton2 and actionButton2.Visible)) and actionWidth or 0
+            return math.max(Compkiller:_InlineControlWidth(LinkValues, UIListLayout, scale), reservedActionWidth)
         end, {Icon = Config.Icon, Triggers = labelTriggers})
 		return Args;
 	end;
@@ -8293,9 +8354,10 @@ return Args;
 			Compkiller.Flags[Config.Flag] = iArgs;
 		end;
 
+        if Config.Icon then Compkiller:_ControlIcon(BlockText, Config.Icon); end;
         Compkiller:_BindControlLabel(Dropdown, BlockText, function(scale)
             return Compkiller:_InlineControlWidth(LinkValues, LLLayout, scale)
-        end, {Triggers = {{LLLayout, "AbsoluteContentSize"}}})
+        end, {Icon = Config.Icon, Triggers = {{LLLayout, "AbsoluteContentSize"}}})
 		return iArgs;
 	end;
 	-- ─────────────────────────────────────────────────────────────────────────
@@ -8917,12 +8979,19 @@ function Compkiller.new(Config : Window)
 	WindowLabel.BackgroundTransparency = 1.000
 	WindowLabel.BorderColor3 = Color3.fromRGB(0, 0, 0)
 	WindowLabel.BorderSizePixel = 0
-	WindowLabel.Position = UDim2.new(0, 60, 0, 17)
-	WindowLabel.Size = UDim2.new(0, 200, 0, 25)
+	WindowLabel.Position = UDim2.new(0, 60, 0, 13)
+	-- The content panel overlaps the sidebar's final 25 logical pixels.
+	WindowLabel.Size = UDim2.new(1, -97, 0, 32)
 	WindowLabel.Font = Enum.Font.GothamBold
-	WindowLabel.Text = Config.Name
+	WindowLabel.Text = Config.TitleText or Config.Name
 	WindowLabel.TextColor3 = Compkiller.Colors.SwitchColor
 	WindowLabel.TextSize = Config.TextSize
+	WindowLabel.TextScaled = true
+	WindowLabel.TextWrapped = true
+	local TitleSizeConstraint = Instance.new("UITextSizeConstraint")
+	TitleSizeConstraint.MinTextSize = 9
+	TitleSizeConstraint.MaxTextSize = Config.TextSize
+	TitleSizeConstraint.Parent = WindowLabel
 	WindowLabel.TextXAlignment = Enum.TextXAlignment.Left
 
 	table.insert(Compkiller.Elements.SwitchColor , {
@@ -9156,7 +9225,7 @@ function Compkiller.new(Config : Window)
 			});
 
 			Compkiller:_Animation(WindowLabel , Style , {
-				Position = UDim2.new(0, 60,0, 17),
+				Position = UDim2.new(0, 60,0, 13),
 				TextTransparency = 0
 			});
 
@@ -9175,7 +9244,7 @@ function Compkiller.new(Config : Window)
 			});
 
 			Compkiller:_Animation(WindowLabel , Style , {
-				Position = UDim2.new(0, 60 + 25,0, 17),
+				Position = UDim2.new(0, 60 + 25,0, 13),
 				TextTransparency = 1
 			});
 
@@ -9251,7 +9320,7 @@ function Compkiller.new(Config : Window)
 		Category.BorderColor3 = Color3.fromRGB(0, 0, 0)
 		Category.BorderSizePixel = 0
 		Category.ClipsDescendants = true
-		Category.Size = UDim2.new(1, -10, 0, 22)
+		Category.Size = UDim2.new(1, -10, 0, 30)
 
 		if Compkiller:_IsMobile() then
 			Compkiller:_AddDragBlacklist(Category);
@@ -9262,13 +9331,13 @@ function Compkiller.new(Config : Window)
 		CategoryText.BackgroundTransparency = 1.000
 		CategoryText.BorderColor3 = Color3.fromRGB(0, 0, 0)
 		CategoryText.BorderSizePixel = 0
-		CategoryText.Position = UDim2.new(0, 5, 0, 8)
-		CategoryText.Size = UDim2.new(1, 200, 0, 10)
-		CategoryText.Font = Enum.Font.Gotham
+		CategoryText.Position = UDim2.new(0, 8, 0, 3)
+		CategoryText.Size = UDim2.new(1, -16, 0, 22)
+		CategoryText.Font = Enum.Font.GothamBold
 		CategoryText.Text = config.Name
 		CategoryText.TextColor3 = Compkiller.Colors.SwitchColor
-		CategoryText.TextSize = 18
-		CategoryText.TextTransparency = 0.25
+		CategoryText.TextSize = 14
+		CategoryText.TextTransparency = 0.05
 		CategoryText.TextXAlignment = Enum.TextXAlignment.Left
 
 		table.insert(Compkiller.Elements.SwitchColor , {
@@ -9298,7 +9367,7 @@ function Compkiller.new(Config : Window)
 		TabHover:Connect(function(bool)
 			if bool then
 				Compkiller:_Animation(CategoryText,Tween,{
-					TextTransparency = 0.25
+					TextTransparency = 0.05
 				});
 
 				Compkiller:_Animation(Frame,Tween,{
@@ -9469,6 +9538,16 @@ function Compkiller.new(Config : Window)
 			Property = 'TextColor3'
 		});
 		
+        -- Keep status below the child tabs instead of painting over their labels.
+        local function layoutProgress()
+            local visible = ProgressLabel.Text ~= ""
+            ProgressLabel.Visible = visible
+            ProgressLabel.Position = UDim2.new(0,12,0,30)
+            ProgressLabel.Size = UDim2.new(1,-24,0,25)
+            MainFrame.Size = UDim2.new(1,0,1,visible and -65 or -35)
+        end
+        ProgressLabel:GetPropertyChangedSignal("Text"):Connect(layoutProgress)
+        layoutProgress()
 		TabArgs.ProgressLabel = ProgressLabel
         function TabArgs:SetProgress(text, completed, total)
             if TabArgs.ProgressLabel then
@@ -9702,10 +9781,12 @@ function Compkiller.new(Config : Window)
 				Property = 'TextColor3'
 			});
 
+			if TabConfig.Icon then Compkiller:_ControlIcon(TextLabel, TabConfig.Icon); end;
+
 			local UpdateScale = function()
 				local scale = TextService:GetTextSize(TextLabel.Text,TextLabel.TextSize,TextLabel.Font,Vector2.new(math.huge,math.huge));
 
-				Frame.Size = UDim2.new(0, scale.X + 19, 0, 26)
+				Frame.Size = UDim2.new(0, scale.X + (TabConfig.Icon and 45 or 19), 0, 26)
 			end;
 
 			UpdateScale()
@@ -11222,13 +11303,19 @@ function Compkiller.new(Config : Window)
 			TabNameLabel.BorderColor3 = Color3.fromRGB(0, 0, 0)
 			TabNameLabel.BorderSizePixel = 0
 			TabNameLabel.Position = UDim2.new(0, 43, 0.5, 0)
-			TabNameLabel.Size = UDim2.new(0, 200, 0, 25)
+			TabNameLabel.Size = UDim2.new(1, -50, 0, 25)
 			TabNameLabel.ZIndex = 3
 			TabNameLabel.Font = Enum.Font.GothamMedium
 			TabNameLabel.Text = TabConfig.Name;
 			TabNameLabel.TextColor3 = Compkiller.Colors.SwitchColor
 			TabNameLabel.TextSize = 16
 			TabNameLabel.TextXAlignment = Enum.TextXAlignment.Left
+			TabNameLabel.TextWrapped = false
+			local TabNameLabelConstraint = Instance.new("UITextSizeConstraint")
+			TabNameLabelConstraint.MinTextSize = 8
+			TabNameLabelConstraint.MaxTextSize = 16
+			TabNameLabelConstraint.Parent = TabNameLabel
+			TabNameLabel.TextScaled = true
 
 			table.insert(Compkiller.Elements.SwitchColor , {
 				Element = TabNameLabel,
@@ -11417,7 +11504,7 @@ function Compkiller.new(Config : Window)
 					});
 
 					Compkiller:_Animation(TabNameLabel,Tween,{
-						Size = UDim2.new(0, 200, 0, 25),
+						Size = UDim2.new(1, -50, 0, 25),
 						Position = UDim2.new(0, 43, 0.5, 0)
 					});
 
@@ -11444,7 +11531,7 @@ function Compkiller.new(Config : Window)
 					});
 
 					Compkiller:_Animation(TabNameLabel,Tween,{
-						Size = UDim2.new(0, 200, 0, 25),
+						Size = UDim2.new(1, -87, 0, 25),
 						Position = UDim2.new(0, 80, 0.5, 0)
 					});
 
@@ -12134,6 +12221,7 @@ function Compkiller.new(Config : Window)
 
 	function WindowArgs:Update(config: WindowUpdate)
 		config = config or {};
+		local displayTitle = config.WindowName or Config.TitleText or Config.Name;
 		config.Logo = config.Logo or Config.Logo;
 		config.Username = config.Username or LocalPlayer.DisplayName;
 		config.ExpireDate = config.ExpireDate or "@" ..config.Username;
@@ -12143,7 +12231,7 @@ function Compkiller.new(Config : Window)
 		UserText.Text = config.Username;
 		CompLogo.Image = config.Logo;
 		ExpireText.Text = config.ExpireDate;
-		WindowLabel.Text = config.WindowName;
+		WindowLabel.Text = displayTitle;
 		UserProfile.Image = config.UserProfile;
 		WindowArgs.Username = config.Username;
 
@@ -12720,9 +12808,25 @@ function Compkiller.newNotify()
 	UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
 	UIListLayout.Padding = UDim.new(0, 3)
 
+    local notificationThreads = {};
+    local function schedule(seconds, callback)
+        local thread;
+        thread = task.delay(seconds,function()
+            notificationThreads[thread]=nil;
+            if Notification.Parent then callback(); end;
+        end);
+        notificationThreads[thread]=true;
+        return thread;
+    end;
+    Notification.Destroying:Connect(function()
+        for thread in pairs(notificationThreads) do pcall(task.cancel,thread); end;
+        table.clear(notificationThreads);
+        if Compkiller.NOTIFY_CACHE and Compkiller.NOTIFY_CACHE.Root==Notification then Compkiller.NOTIFY_CACHE=nil; end;
+    end);
 	local LayoutREF = 0;
 
 	Compkiller.NOTIFY_CACHE = {
+        Root = Notification,
 		new = function(Notify: Notify) : NotifyPayback
 			Notify = Compkiller.__CONFIG(Notify, {
 				Icon = Compkiller.Logo,
@@ -12893,10 +12997,10 @@ function Compkiller.newNotify()
 					Size = UDim2.new(1, 0, 1, 0)
 				});
 
-				return task.delay(0.25,function()
+				return schedule(0.25,function()
 					Show();
 
-					task.delay(Notify.Duration + 0.2,Close)
+					schedule(Notify.Duration + 0.2,Close)
 				end);
 			end;
 
@@ -13039,4 +13143,118 @@ function Compkiller:CreateWindow(name, isMulti)
 	end
 end
 
+-- Reusable Lumber-style task overlay. Caller owns Root/Destroy and its lifetime.
+function Compkiller:CreateTaskProgress(config)
+    config = config or {}
+    local root = Instance.new("ScreenGui")
+    root.Name = "ButterTaskProgress"
+    root.ResetOnSpawn = false
+    root.IgnoreGuiInset = true
+    root.DisplayOrder = 100
+    root.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    self.ProtectGui(root)
+    root.Parent = CoreGui
+
+    local panel = Instance.new("Frame")
+    panel.Name = "TaskProgress"
+    panel.AnchorPoint = Vector2.new(0.5, 0)
+    panel.Position = UDim2.new(0.5, 0, 0, 16)
+    panel.Size = UDim2.new(1, -32, 0, 52)
+    panel.BorderSizePixel = 0
+    panel.BackgroundTransparency = 0.06
+    panel.Visible = false
+    panel.Parent = root
+    local bounds = Instance.new("UISizeConstraint")
+    bounds.MaxSize = Vector2.new(420, 52)
+    bounds.Parent = panel
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 7)
+    corner.Parent = panel
+    local stroke = Instance.new("UIStroke")
+    stroke.Transparency = 0.3
+    stroke.Parent = panel
+    self:_BindPolishColor(panel, "BackgroundColor3", "Popup")
+    self:_BindPolishColor(stroke, "Color", "StrokeColor")
+
+    local icon = self:_CreateBrandIcon(panel)
+    icon.Position = UDim2.fromOffset(12, 9)
+    icon.Size = UDim2.fromOffset(20, 20)
+    icon.AnchorPoint = Vector2.zero
+    local title = Instance.new("TextLabel")
+    title.BackgroundTransparency = 1
+    title.Position = UDim2.fromOffset(40, 9)
+    title.Size = UDim2.new(1, -112, 0, 20)
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 13
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.TextTruncate = Enum.TextTruncate.AtEnd
+    title.Text = config.Title or "Working"
+    title.Parent = panel
+    self:_BindPolishColor(title, "TextColor3", "SwitchColor")
+    local detail = Instance.new("TextLabel")
+    detail.BackgroundTransparency = 1
+    detail.AnchorPoint = Vector2.new(1, 0)
+    detail.Position = UDim2.new(1, -12, 0, 9)
+    detail.Size = UDim2.fromOffset(56, 20)
+    detail.Font = Enum.Font.GothamBold
+    detail.TextSize = 12
+    detail.TextXAlignment = Enum.TextXAlignment.Right
+    detail.Text = ""
+    detail.Parent = panel
+    self:_BindPolishColor(detail, "TextColor3", "Highlight")
+    local track = Instance.new("Frame")
+    track.Position = UDim2.fromOffset(12, 37)
+    track.Size = UDim2.new(1, -24, 0, 5)
+    track.BorderSizePixel = 0
+    track.ClipsDescendants = true
+    track.Parent = panel
+    self:_BindPolishColor(track, "BackgroundColor3", "StrokeColor")
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.fromScale(0, 1)
+    fill.BorderSizePixel = 0
+    fill.Parent = track
+    self:_BindPolishColor(fill, "BackgroundColor3", "Highlight")
+    for _, object in ipairs({track, fill}) do
+        local round = Instance.new("UICorner")
+        round.CornerRadius = UDim.new(0, 3)
+        round.Parent = object
+    end
+
+    local api = {Root = root, Panel = panel, Label = title, Detail = detail, Fill = fill}
+    local animation, mode, value, destroyed
+    local function cancel()
+        if animation then animation:Cancel() animation = nil end
+    end
+    function api:Set(label, fraction, rightText)
+        if destroyed then return end
+        if label and title.Text ~= label then title.Text = label end
+        rightText = rightText or ""
+        if detail.Text ~= rightText then detail.Text = rightText end
+        local nextMode = fraction == nil and "indeterminate" or "progress"
+        local nextValue = fraction and math.clamp(fraction, 0, 1)
+        if panel.Visible and mode == nextMode and value == nextValue then return end
+        cancel()
+        panel.Visible = true
+        mode, value = nextMode, nextValue
+        if fraction == nil then
+            fill.Size = UDim2.fromScale(0.3, 1)
+            fill.Position = UDim2.fromScale(-0.3, 0)
+            animation = TweenService:Create(fill, TweenInfo.new(1.25, Enum.EasingStyle.Linear,
+                Enum.EasingDirection.InOut, -1), {Position = UDim2.fromScale(1, 0)})
+        else
+            fill.Position = UDim2.fromScale(0, 0)
+            animation = TweenService:Create(fill, TweenInfo.new(0.25), {Size = UDim2.fromScale(nextValue, 1)})
+        end
+        animation:Play()
+    end
+    function api:Hide()
+        if destroyed then return end
+        cancel()
+        panel.Visible = false
+        mode, value = nil, nil
+    end
+    function api:Destroy() root:Destroy() end
+    root.Destroying:Connect(function() destroyed = true cancel() end)
+    return api
+end
 return Compkiller;
